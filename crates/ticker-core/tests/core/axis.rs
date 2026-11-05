@@ -166,3 +166,11 @@ fn a_crowded_row_keeps_every_label_that_fits() {
 fn no_labels_draw_nothing() {
     assert_eq!(spaced_labels(&[], GAP), Vec::<bool>::new());
 }
+
+#[test]
+fn a_price_tick_on_the_domain_end_is_kept_as_swift_keeps_it() {
+    let ticks = priced(1.0, 2.4).price_ticks();
+    let values: Vec<f64> = ticks.iter().map(|tick| tick.value).collect();
+    assert_eq!(values.len(), 8, "0.2 steps from 1.0 through 2.4: {values:?}");
+    assert_eq!(values.last(), Some(&2.4), "first + 7 * step rounded once, as Swift's stride does");
+}
