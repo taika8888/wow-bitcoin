@@ -41,12 +41,16 @@ final class CandleChartView: PaintedView {
         if timeTicks.count > 1 {
             Self.timeLabel.setLocalizedDateFormatFromTemplate(timeTicks[1].timeIntervalSince(timeTicks[0]) < 86400 ? "jmm" : "MMMd")
         }
+        var labelEnd = -Double.infinity
         for tick in timeTicks {
             let tickX = x(tick).rounded() + 0.5
             grid.move(to: NSPoint(x: tickX, y: plot.minY))
             grid.line(to: NSPoint(x: tickX, y: plot.maxY))
             let label = NSAttributedString(string: Self.timeLabel.string(from: tick), attributes: labelAttributes)
-            label.draw(at: NSPoint(x: min(tickX + 2, plot.maxX - label.size().width), y: plot.maxY + 2))
+            let labelX = min(tickX + 2, plot.maxX - label.size().width)
+            guard labelX >= labelEnd + 6 else { continue }
+            label.draw(at: NSPoint(x: labelX, y: plot.maxY + 2))
+            labelEnd = labelX + label.size().width
         }
         for tick in chart.priceTicks {
             let tickY = y(tick).rounded() + 0.5
