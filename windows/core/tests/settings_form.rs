@@ -118,3 +118,26 @@ fn each_row_edits_only_its_key() {
         );
     }
 }
+
+#[test]
+fn every_slider_reads_out_its_value_in_its_unit() {
+    let shown: Vec<(&str, String)> = FORM
+        .iter()
+        .filter_map(|field| match &field.kind {
+            FieldKind::Slider { format, get, .. } => {
+                Some((field.key, format(get(&Settings::default()))))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        [
+            ("fontSize", "15 pt".to_string()),
+            ("opacity", "55%".to_string()),
+            ("chartWidth", "360 px".to_string()),
+            ("chartHeight", "180 px".to_string()),
+        ],
+        "each slider's label shows the default in the setting's unit"
+    );
+}

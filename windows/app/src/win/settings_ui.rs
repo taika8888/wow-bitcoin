@@ -264,7 +264,7 @@ fn build(hwnd: HWND, origin: Option<(i32, i32)>) {
             label: text, kind, ..
         } = field;
         match kind {
-            FieldKind::Slider { unit, .. } => {
+            FieldKind::Slider { .. } => {
                 label(row, text, y);
                 child(
                     "",
@@ -276,18 +276,16 @@ fn build(hwnd: HWND, origin: Option<(i32, i32)>) {
                     px(CONTROL_WIDTH),
                     normal,
                 );
-                if !unit.is_empty() {
-                    child(
-                        "",
-                        w!("STATIC"),
-                        SS_CENTERIMAGE.0,
-                        id(row, VALUE),
-                        value_x,
-                        y,
-                        px(VALUE_WIDTH),
-                        normal,
-                    );
-                }
+                child(
+                    "",
+                    w!("STATIC"),
+                    SS_CENTERIMAGE.0,
+                    id(row, VALUE),
+                    value_x,
+                    y,
+                    px(VALUE_WIDTH),
+                    normal,
+                );
             }
             FieldKind::Stepper { .. } => {
                 label(row, text, y);
@@ -524,14 +522,14 @@ fn set_controls(hwnd: HWND, settings: &Settings) {
             FieldKind::Slider {
                 range,
                 step,
-                unit,
+                format,
                 get,
                 ..
             } => {
                 let value = get(settings);
                 let position = ((value - range.start()) / step).round() as isize;
                 send(item(hwnd, row, MAIN), TBM_SETPOS, 1, position);
-                set_text(item(hwnd, row, VALUE), &format!("{value:.0} {unit}"));
+                set_text(item(hwnd, row, VALUE), &format(value));
             }
             FieldKind::Stepper { format, get, .. } => {
                 let value = get(settings);

@@ -223,7 +223,7 @@ pub enum FieldKind {
     Slider {
         range: RangeInclusive<f64>,
         step: f64,
-        unit: &'static str,
+        format: fn(f64) -> String,
         get: fn(&Settings) -> f64,
         set: fn(&mut Settings, f64),
     },
@@ -266,7 +266,7 @@ pub static FORM: &[Field] = &[
         kind: FieldKind::Slider {
             range: Settings::FONT_SIZE,
             step: 1.0,
-            unit: "pt",
+            format: |v| format!("{v:.0} pt"),
             get: |s| s.font_size,
             set: |s, v| s.font_size = v,
         },
@@ -333,7 +333,7 @@ pub static FORM: &[Field] = &[
         kind: FieldKind::Slider {
             range: Settings::OPACITY,
             step: 0.01,
-            unit: "",
+            format: |v| format!("{:.0}%", v * 100.0),
             get: |s| s.opacity,
             set: |s, v| s.opacity = v,
         },
@@ -345,7 +345,7 @@ pub static FORM: &[Field] = &[
         kind: FieldKind::Slider {
             range: Settings::CHART_WIDTH,
             step: 10.0,
-            unit: "px",
+            format: |v| format!("{v:.0} px"),
             get: |s| s.chart_width,
             set: |s, v| s.chart_width = v,
         },
@@ -357,7 +357,7 @@ pub static FORM: &[Field] = &[
         kind: FieldKind::Slider {
             range: Settings::CHART_HEIGHT,
             step: 10.0,
-            unit: "px",
+            format: |v| format!("{v:.0} px"),
             get: |s| s.chart_height,
             set: |s, v| s.chart_height = v,
         },
