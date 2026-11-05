@@ -33,11 +33,11 @@ pub fn frontmost(app: Frontmost) -> &'static str {
 pub fn settings_words(settings: &Settings) -> String {
     let position = settings.position.map_or("default".to_string(), |point| format!("({}, {})", point.x, point.y));
     format!(
-        "locked {}, onlyWhenWoWActive {}, refresh {} s, timeframe {}, zoom {}, position {position}",
+        "locked {}, onlyWhenWoWActive {}, refresh {} s, timeframe {}, zoom {:?}, position {position}",
         settings.locked,
         settings.only_when_wow_active,
         settings.refresh_seconds,
         settings.timeframe.spec().label,
-        settings.zoom.label()
+        settings.zoom
     )
 }
