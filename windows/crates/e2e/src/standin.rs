@@ -4,7 +4,8 @@
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -16,7 +17,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, GetMessageW, GetWindowTextW, IDC_ARROW,
     LoadCursorW, MSG, PostQuitMessage, RegisterClassW, SW_SHOW, SetForegroundWindow, ShowWindow, TranslateMessage,
-    WINDOW_EX_STYLE, WM_DESTROY, WM_PAINT, WNDCLASSW, WS_POPUP,
+    WINDOW_EX_STYLE, WM_DESTROY, WM_MOUSEWHEEL, WM_PAINT, WNDCLASSW, WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 
@@ -25,6 +26,7 @@ use crate::desktop::{self, Rect};
 pub struct StandIn {
     child: Child,
     pub hwnd: HWND,
+    wheel: Arc<AtomicU32>,
 }
 
 impl StandIn {
@@ -44,17 +46,21 @@ impl StandIn {
             .map_err(|error| format!("could not start {}: {error}", exe.display()))?;
         let stdout = child.stdout.take().ok_or("no stdout")?;
         let (sender, receiver) = mpsc::channel();
+        let wheel = Arc::new(AtomicU32::new(0));
+        let turns = Arc::clone(&wheel);
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
                 if let Some(raw) = line.strip_prefix("HWND ").and_then(|raw| raw.parse::<i64>().ok()) {
                     let _ = sender.send(raw);
+                } else if line == "WHEEL" {
+                    turns.fetch_add(1, Ordering::Relaxed);
                 }
             }
         });
         match receiver.recv_timeout(Duration::from_secs(10)) {
             Ok(raw) => {
                 std::thread::sleep(Duration::from_millis(300));
-                Ok(StandIn { child, hwnd: desktop::hwnd(raw) })
+                Ok(StandIn { child, hwnd: desktop::hwnd(raw), wheel })
             }
             Err(_) => {
                 let _ = child.kill();
@@ -62,6 +68,13 @@ impl StandIn {
                 Err(format!("{} showed no window within 10 s", exe.display()))
             }
         }
+    }
+}
+
+impl StandIn {
+    /// How many `WM_MOUSEWHEEL` messages the stand-in's window has received.
+    pub fn wheel_messages(&self) -> u32 {
+        self.wheel.load(Ordering::Relaxed)
     }
 }
 
@@ -138,6 +151,10 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
                 let length = GetWindowTextW(hwnd, &mut title);
                 DrawTextW(dc, &mut title[..length as usize], &mut client, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
                 let _ = EndPaint(hwnd, &paint);
+                LRESULT(0)
+            }
+            WM_MOUSEWHEEL => {
+                println!("WHEEL");
                 LRESULT(0)
             }
             WM_DESTROY => {

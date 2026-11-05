@@ -22,6 +22,14 @@ const KRAKEN_TICKER: &str = "https://api.kraken.com/0/public/Ticker?pair=XBTUSD"
 const MENU_CLASS: &str = "BTCTickerMenu";
 const SETTINGS_CLASS: &str = "BTCTickerSettings";
 const MENU_ROWS: f64 = 3.0;
+const WHEEL_DELTA: i32 = 120;
+/// `MOUSEWHEEL_ROUTING_FOCUS`: the wheel goes to the focused window, as with "Scroll inactive windows" off.
+const FOCUS_ROUTING: u32 = 0;
+/// Kraken answers with 721 candles, the newest still forming, and the app keeps 720.
+const HELD_CANDLES: usize = 720;
+/// The bar budget the app promises: one bar per 2 DIPs of chart width past a 60 DIP price axis.
+const PRICE_AXIS_DIPS: f64 = 60.0;
+const DIPS_PER_BAR: f64 = 2.0;
 
 fn main() {
     desktop::per_monitor_dpi();
@@ -315,7 +323,9 @@ fn fresh_install(report: &mut Report, app: &Path, work: &Path, tag: usize, pid_f
     let _ = std::fs::create_dir_all(work);
     let ticker = match Ticker::launch(app, work, None, tag) {
         Ok(ticker) => ticker,
-        Err(error) => return report.line("FAIL", "fresh-install", format!("could not start {}: {error}", app.display())),
+        Err(error) => {
+            return report.line("FAIL", "fresh-install", format!("could not start {}: {error}", app.display()));
+        }
     };
     if let Some(pid_file) = pid_file {
         let _ = std::fs::write(pid_file, ticker.pid.to_string());
@@ -474,6 +484,7 @@ fn chart(report: &mut Report, session: &mut Session, shots: &Path, work_area: &R
             Err(error) => report.line("FAIL", &format!("timeframe-{label}"), error),
         }
     }
+    zoom(report, session, shots);
     match session.click("ticker", 5.0, |snapshot| snapshot.mode == "collapsed") {
         Ok(folded) => {
             samples.push(folded.ticker());
@@ -505,6 +516,124 @@ fn chart(report: &mut Report, session: &mut Session, shots: &Path, work_area: &R
         } else {
             format!("the ticker at {home} moved to {}", moved.join(", "))
         },
+    );
+}
+
+/// Real wheel input over the expanded 1m chart at x1, which it leaves at x1. The stand-in game stays in the foreground
+/// and must receive none of the wheel messages.
+fn zoom(report: &mut Report, session: &mut Session, shots: &Path) {
+    let start = session.ticker.snapshot().filter(|snapshot| charted("1m")(snapshot));
+    let Some((start, chart)) = start.and_then(|start| Some((start.clone(), *start.targets.get("chart")?))) else {
+        let last = describe(session.ticker.snapshot().as_ref());
+        for name in ["zoom-wheel", "zoom-touchpad", "zoom-focus-routing"] {
+            report.line("FAIL", name, format!("not tried: no loaded 1m chart with a 'chart' target to scroll; {last}"));
+        }
+        return;
+    };
+    let scale = desktop::scale(desktop::hwnd(start.hwnd));
+    let budget = (((chart.width / scale - PRICE_AXIS_DIPS) / DIPS_PER_BAR).floor() as usize).max(1);
+    let bars = move |visible: usize| visible / visible.div_ceil(budget);
+    let shows = move |zoom: &'static str, visible: usize| {
+        move |snapshot: &Snapshot| {
+            snapshot.zoom.as_deref() == Some(zoom)
+                && snapshot.visible_candles == visible
+                && snapshot.candles == bars(visible)
+                && snapshot.max_bars == budget
+        }
+    };
+    let center = chart.center();
+    let saved_zoom = |session: &Session| session.ticker.saved_settings().and_then(|saved| saved.get("zoom").cloned());
+    let routing = desktop::WheelRouting::current();
+
+    let game_before = session.game.wheel_messages();
+    let notched = session.gesture(
+        "wheel 2 notches toward the user",
+        5.0,
+        |mouse, allowed| mouse.wheel(center, -WHEEL_DELTA, 2, allowed),
+        shows("×4", 480),
+    );
+    let widest = notched.as_ref().map_err(Clone::clone).and_then(|_| {
+        session.gesture(
+            "wheel 2 more notches toward the user",
+            5.0,
+            |mouse, allowed| mouse.wheel(center, -WHEEL_DELTA, 2, allowed),
+            shows("all", HELD_CANDLES),
+        )
+    });
+    let saved = saved_zoom(session);
+    let game_got = session.game.wheel_messages() - game_before;
+    report.check(
+        widest.is_ok() && saved == Some(json!(5)) && game_got == 0,
+        "zoom-wheel (SendInput MOUSEEVENTF_WHEEL, real input)",
+        match (&notched, &widest) {
+            (Ok(notched), Ok(widest)) => format!(
+                "wheel routing {routing:?}; two notches over the {scale}x-scaled 1m chart stepped two rungs to x4 ({} candles in {} bars), two more reached and held all: {} candles in {} bars for a {budget}-bar budget; the settings file holds zoom {saved:?}; the stand-in game got {game_got} wheel messages",
+                notched.visible_candles, notched.candles, widest.visible_candles, widest.candles
+            ),
+            (Err(error), _) | (_, Err(error)) => {
+                format!("wheel routing {routing:?}; {error}; budget {budget}, saved zoom {saved:?}, game got {game_got}")
+            }
+        },
+    );
+    if let Ok(widest) = &widest {
+        screenshot(report, widest, shots, "expanded-1m-all", true);
+    }
+
+    let game_before = session.game.wheel_messages();
+    let standard = widest.as_ref().map_err(|_| "not tried: the wheel never reached all".to_string()).and_then(|_| {
+        session.gesture(
+            "6 touchpad-sized scrolls away from the user",
+            5.0,
+            |mouse, allowed| mouse.wheel(center, WHEEL_DELTA / 2, 6, allowed),
+            shows("×1", 120),
+        )
+    });
+    let saved = saved_zoom(session);
+    let game_got = session.game.wheel_messages() - game_before;
+    report.check(
+        standard.is_ok() && saved == Some(json!(2)) && game_got == 0,
+        "zoom-touchpad (SendInput half-notch wheel deltas, not a touchpad)",
+        match &standard {
+            Ok(standard) => format!(
+                "six deltas of {} added up to three rungs, back from all to x1 with {} bars; the settings file holds zoom {saved:?}; the stand-in game got {game_got} wheel messages",
+                WHEEL_DELTA / 2,
+                standard.candles
+            ),
+            Err(error) => format!("{error}; saved zoom {saved:?}, game got {game_got}"),
+        },
+    );
+
+    let Some(focus) = desktop::WheelRouting::set(FOCUS_ROUTING) else {
+        return report.line(
+            "INCONCLUSIVE",
+            "zoom-focus-routing",
+            format!("Windows would not route the wheel to the focused window for this session (routing {routing:?})"),
+        );
+    };
+    let game_before = session.game.wheel_messages();
+    let out = session.gesture(
+        "wheel 1 notch with the wheel routed to focus",
+        5.0,
+        |mouse, allowed| mouse.wheel(center, -WHEEL_DELTA, 1, allowed),
+        shows("×2", 240),
+    );
+    let game_got = session.game.wheel_messages() - game_before;
+    drop(focus);
+    let back = session.gesture(
+        "wheel 1 notch back",
+        5.0,
+        |mouse, allowed| mouse.wheel(center, WHEEL_DELTA, 1, allowed),
+        shows("×1", 120),
+    );
+    report.check(
+        out.is_ok() && back.is_ok() && game_got == 0,
+        "zoom-focus-routing",
+        format!(
+            "with \"Scroll inactive windows\" off for this session, a notch over the chart zoomed to x2 {} and the focused stand-in game got {game_got} wheel messages; routing restored to {:?}, a notch back reached x1 {}",
+            out.is_ok(),
+            desktop::WheelRouting::current(),
+            back.is_ok()
+        ),
     );
 }
 
@@ -817,13 +946,15 @@ fn now() -> f64 {
 fn describe(snapshot: Option<&Snapshot>) -> String {
     match snapshot {
         Some(snapshot) => format!(
-            "'{}' feed {} mode {} timeframe {} chart {} candles {} locked {} visible {} frame {}",
+            "'{}' feed {} mode {} timeframe {} zoom {} chart {} candles {} of {} locked {} visible {} frame {}",
             snapshot.text,
             snapshot.feed,
             snapshot.mode,
             snapshot.timeframe.as_deref().unwrap_or("-"),
+            snapshot.zoom.as_deref().map_or("-".to_string(), |zoom| zoom.replace('×', "x")),
             snapshot.chart.as_deref().unwrap_or("-"),
             snapshot.candles,
+            snapshot.visible_candles,
             snapshot.locked,
             snapshot.visible,
             snapshot.frame

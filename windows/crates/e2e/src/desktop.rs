@@ -17,7 +17,8 @@ use windows::Win32::System::Threading::{
 use windows::Win32::UI::HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetProcessDpiAwarenessContext};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_MOUSE, MOUSE_EVENT_FLAGS, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-    MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK, MOUSEINPUT, SendInput,
+    MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL,
+    MOUSEINPUT, SendInput,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GA_ROOT, GW_HWNDNEXT, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow,
@@ -232,9 +233,9 @@ impl Mouse {
         } else {
             (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP)
         };
-        self.send(down, 0, 0)?;
+        self.send(down, 0, 0, 0)?;
         std::thread::sleep(Duration::from_millis(40));
-        self.send(up, 0, 0)?;
+        self.send(up, 0, 0, 0)?;
         std::thread::sleep(Duration::from_millis(250));
         Ok(())
     }
@@ -242,7 +243,7 @@ impl Mouse {
     pub fn drag(&self, from: POINT, to: POINT, allowed: &[HWND]) -> Result<(), String> {
         self.guard(from, allowed)?;
         self.move_to(from)?;
-        self.send(MOUSEEVENTF_LEFTDOWN, 0, 0)?;
+        self.send(MOUSEEVENTF_LEFTDOWN, 0, 0, 0)?;
         std::thread::sleep(Duration::from_millis(60));
         const STEPS: i32 = 12;
         for step in 1..=STEPS {
@@ -250,8 +251,22 @@ impl Mouse {
             self.move_to(at)?;
             std::thread::sleep(Duration::from_millis(15));
         }
-        self.send(MOUSEEVENTF_LEFTUP, 0, 0)?;
+        self.send(MOUSEEVENTF_LEFTUP, 0, 0, 0)?;
         std::thread::sleep(Duration::from_millis(300));
+        Ok(())
+    }
+
+    /// Moves onto `point` from a few pixels left, as a hand reaching for the wheel would, then turns the wheel `times`
+    /// times by `delta` (`WHEEL_DELTA` is one notch; positive is away from the user).
+    pub fn wheel(&self, point: POINT, delta: i32, times: u32, allowed: &[HWND]) -> Result<(), String> {
+        self.guard(point, allowed)?;
+        self.move_to(POINT { x: point.x - 4, ..point })?;
+        self.move_to(point)?;
+        std::thread::sleep(Duration::from_millis(100));
+        for _ in 0..times {
+            self.send(MOUSEEVENTF_WHEEL, 0, 0, delta)?;
+            std::thread::sleep(Duration::from_millis(80));
+        }
         Ok(())
     }
 
@@ -281,7 +296,7 @@ impl Mouse {
             ((i64::from(value - origin) * 65_536 + i64::from(extent) - 1) / i64::from(extent)) as i32
         };
         let flags = MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK;
-        self.send(flags, normalize(point.x, left, width), normalize(point.y, top, height))?;
+        self.send(flags, normalize(point.x, left, width), normalize(point.y, top, height), 0)?;
         std::thread::sleep(Duration::from_millis(30));
         let landed = cursor();
         if (landed.x, landed.y) != (point.x, point.y) {
@@ -293,11 +308,11 @@ impl Mouse {
         Ok(())
     }
 
-    fn send(&self, flags: MOUSE_EVENT_FLAGS, dx: i32, dy: i32) -> Result<(), String> {
+    fn send(&self, flags: MOUSE_EVENT_FLAGS, dx: i32, dy: i32, data: i32) -> Result<(), String> {
         let input = INPUT {
             r#type: INPUT_MOUSE,
             Anonymous: INPUT_0 {
-                mi: MOUSEINPUT { dx, dy, mouseData: 0, dwFlags: flags, time: 0, dwExtraInfo: self.tag },
+                mi: MOUSEINPUT { dx, dy, mouseData: data as u32, dwFlags: flags, time: 0, dwExtraInfo: self.tag },
             },
         };
         // SAFETY: sends one fully initialized input.
@@ -403,6 +418,70 @@ pub fn post_close(window: HWND) {
             windows::Win32::UI::WindowsAndMessaging::WM_CLOSE,
             WPARAM(0),
             LPARAM(0),
+        )
+    };
+}
+
+/// The window's monitor DPI over 96.
+pub fn scale(window: HWND) -> f64 {
+    // SAFETY: plain query.
+    let dpi = unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(window) };
+    if dpi == 0 { 1.0 } else { f64::from(dpi) / 96.0 }
+}
+
+/// Where Windows sends wheel input: `MOUSEWHEEL_ROUTING_MOUSE_POS` (2) is "Scroll inactive windows when I hover over
+/// them", `MOUSEWHEEL_ROUTING_FOCUS` (0) the focused window. Setting it lasts until the value is dropped, and never
+/// reaches the user's saved settings.
+pub struct WheelRouting {
+    saved: u32,
+}
+
+impl WheelRouting {
+    pub fn current() -> Option<u32> {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SPI_GETMOUSEWHEELROUTING, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+        };
+        let mut routing = 0u32;
+        // SAFETY: writes one u32.
+        unsafe {
+            SystemParametersInfoW(
+                SPI_GETMOUSEWHEELROUTING,
+                0,
+                Some((&raw mut routing).cast()),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+        }
+        .ok()
+        .map(|()| routing)
+    }
+
+    /// Switches to `routing` for this session, or None when Windows refuses or the switch does not read back.
+    pub fn set(routing: u32) -> Option<WheelRouting> {
+        let saved = Self::current()?;
+        let guard = WheelRouting { saved };
+        apply_routing(routing);
+        (Self::current() == Some(routing)).then_some(guard)
+    }
+}
+
+impl Drop for WheelRouting {
+    fn drop(&mut self) {
+        apply_routing(self.saved);
+    }
+}
+
+/// No SPIF_UPDATEINIFILE, so the change stays in memory for this session and the registry keeps the user's choice.
+fn apply_routing(routing: u32) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SPI_SETMOUSEWHEELROUTING, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+    };
+    // SAFETY: SPI_SETMOUSEWHEELROUTING takes the value itself in pvParam.
+    let _ = unsafe {
+        SystemParametersInfoW(
+            SPI_SETMOUSEWHEELROUTING,
+            0,
+            Some(routing as usize as *mut _),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
         )
     };
 }
