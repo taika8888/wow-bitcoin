@@ -10,39 +10,71 @@ public struct CandleSeries: Hashable, Sendable {
     }
 }
 
-/// One timeframe's candles. `loading` and `failed` keep the last good series so a refresh never blanks the chart.
-public enum CandleLoad: Hashable, Sendable {
-    case idle
-    case loading(last: CandleSeries?)
-    case loaded(CandleSeries)
-    case failed(last: CandleSeries?, at: Date)
+/// Why a request for candles produced none.
+public enum FetchFailure: Error, Hashable, Sendable {
+    /// No answer at all: offline, timed out, refused.
+    case unreachable
+    /// Kraken answered with an HTTP status other than 200.
+    case status(Int)
+    /// Kraken answered 200 with a body that is not a usable response.
+    case rejected(KrakenError)
+}
 
-    public static let retryAfterFailure: TimeInterval = 10
-
-    public var series: CandleSeries? {
+extension FetchFailure {
+    var message: String {
         switch self {
-        case .idle: nil
-        case .loading(let last), .failed(let last, _): last
-        case .loaded(let series): series
+        case .unreachable: "Kraken is not answering"
+        case .status(let code): "Kraken answered HTTP \(code)"
+        case .rejected(.api(let errors)): "Kraken refused: \(errors.joined(separator: ", "))"
+        case .rejected: "Kraken sent candles this app cannot read"
         }
     }
+}
+
+public struct FailedFetch: Hashable, Sendable {
+    public let kind: FetchFailure
+    public let at: Date
+}
+
+/// What the chart shows besides its candles.
+public enum ChartNotice: Hashable, Sendable {
+    /// In place of the chart, when there are no candles to draw.
+    case placeholder(String)
+    /// A small marker over candles that the last refresh failed to update.
+    case stale(String)
+}
+
+/// One timeframe's candles. A refresh in flight or a failed one keeps the last good series, so the chart never blanks.
+public struct CandleLoad: Hashable, Sendable {
+    public static let idle = CandleLoad()
+    public static let retryAfterFailure: TimeInterval = 10
+
+    public fileprivate(set) var series: CandleSeries?
+    public fileprivate(set) var inFlight = false
+    /// The last finished request's failure, cleared by the next success.
+    public fileprivate(set) var failure: FailedFetch?
 
     public var name: String {
-        switch self {
-        case .idle: "idle"
-        case .loading: "loading"
-        case .loaded: "loaded"
-        case .failed: "failed"
+        if inFlight { return "loading" }
+        if failure != nil { return "failed" }
+        return series == nil ? "idle" : "loaded"
+    }
+
+    public func notice(for timeframe: Timeframe) -> ChartNotice? {
+        let hasCandles = series?.candles.isEmpty == false
+        switch (failure?.kind, hasCandles) {
+        case (let kind?, true): return .stale("Stale: \(kind.message)")
+        case (let kind?, false): return .placeholder("\(kind.message), retrying")
+        case (nil, true): return nil
+        case (nil, false): return .placeholder(series == nil ? "Loading \(timeframe.spec.label) candles" : "No \(timeframe.spec.label) candles")
         }
     }
 
     func isDue(_ timeframe: Timeframe, now: Date) -> Bool {
-        switch self {
-        case .idle: true
-        case .loading: false
-        case .loaded(let series): now.timeIntervalSince(series.fetchedAt) >= TimeInterval(timeframe.spec.refreshSeconds)
-        case .failed(_, let at): now.timeIntervalSince(at) >= Self.retryAfterFailure
-        }
+        if inFlight { return false }
+        if let failure { return now.timeIntervalSince(failure.at) >= Self.retryAfterFailure }
+        guard let series else { return true }
+        return now.timeIntervalSince(series.fetchedAt) >= TimeInterval(timeframe.spec.refreshSeconds)
     }
 }
 
@@ -56,19 +88,27 @@ public struct ChartFeed: Hashable, Sendable {
         loads[timeframe] ?? .idle
     }
 
-    /// Marks the timeframe loading and returns it when a request should start now.
+    /// Marks the timeframe in flight and returns it when a request should start now.
     public mutating func beginFetch(for overlay: OverlayState, now: Date) -> Timeframe? {
         guard overlay.isVisible, case .expanded(let timeframe) = overlay.mode, self[timeframe].isDue(timeframe, now: now) else {
             return nil
         }
-        loads[timeframe] = .loading(last: self[timeframe].series)
+        loads[timeframe, default: .idle].inFlight = true
         return timeframe
     }
 
-    /// `nil` candles means the request failed.
-    public mutating func finish(_ timeframe: Timeframe, candles: [Candle]?, at now: Date) {
-        guard case .loading(let last) = self[timeframe] else { return }
-        loads[timeframe] = candles.map { .loaded(CandleSeries(candles: $0, fetchedAt: now)) } ?? .failed(last: last, at: now)
+    public mutating func finish(_ timeframe: Timeframe, _ result: Result<[Candle], FetchFailure>, at now: Date) {
+        guard self[timeframe].inFlight else { return }
+        var load = self[timeframe]
+        load.inFlight = false
+        switch result {
+        case .success(let candles):
+            load.series = CandleSeries(candles: candles, fetchedAt: now)
+            load.failure = nil
+        case .failure(let kind):
+            load.failure = FailedFetch(kind: kind, at: now)
+        }
+        loads[timeframe] = load
     }
 }
 

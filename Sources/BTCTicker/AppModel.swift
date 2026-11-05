@@ -92,21 +92,31 @@ final class AppModel {
         guard let timeframe = charts.beginFetch(for: overlay, now: .now) else { return }
         onChange()
         Task {
-            let candles = await fetchCandles(timeframe)
-            charts.finish(timeframe, candles: candles, at: .now)
+            let result = await fetchCandles(timeframe)
+            charts.finish(timeframe, result, at: .now)
             onChange()
         }
     }
 
-    private func fetchCandles(_ timeframe: Timeframe) async -> [Candle]? {
+    private func fetchCandles(_ timeframe: Timeframe) async -> Result<[Candle], FetchFailure> {
+        func fail(_ failure: FetchFailure, _ detail: Any) -> Result<[Candle], FetchFailure> {
+            FileHandle.standardError.write(Data("\(timeframe.spec.label) candle fetch failed: \(detail)\n".utf8))
+            return .failure(failure)
+        }
+        let request = URLRequest(url: Kraken.ohlcURL(timeframe), cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+        let data: Data
         do {
-            let request = URLRequest(url: Kraken.ohlcURL(timeframe), cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
-            let (data, response) = try await session.data(for: request)
-            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
-            return try Kraken.parseCandles(data, timeframe: timeframe)
+            let (body, response) = try await session.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+            guard status == 200 else { return fail(.status(status), "HTTP \(status)") }
+            data = body
         } catch {
-            FileHandle.standardError.write(Data("\(timeframe.spec.label) candle fetch failed: \(error)\n".utf8))
-            return nil
+            return fail(.unreachable, error)
+        }
+        do throws(KrakenError) {
+            return .success(try Kraken.parseCandles(data, timeframe: timeframe))
+        } catch {
+            return fail(.rejected(error), error)
         }
     }
 

@@ -4,7 +4,7 @@ import TickerCore
 
 struct CandleChartView: View {
     var chart: CandleChart?
-    var placeholder = ""
+    var notice: ChartNotice?
     var settings = TickerCore.Settings()
     var bodyWidth = 2.0
 
@@ -46,12 +46,26 @@ struct CandleChartView: View {
                     }
                 }
             }
+            .overlay(alignment: .topLeading) {
+                if case .stale(let marker) = notice {
+                    Text(marker)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(Color(nsColor: NSColor(settings.downColor)))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(.black.opacity(0.6), in: Capsule())
+                }
+            }
         } else {
-            Text(placeholder)
+            Text(placeholderText)
                 .font(.caption)
                 .foregroundStyle(text.opacity(0.6))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private var placeholderText: String {
+        if case .placeholder(let text) = notice { text } else { "" }
     }
 
     private func color(_ tone: Tone) -> Color {

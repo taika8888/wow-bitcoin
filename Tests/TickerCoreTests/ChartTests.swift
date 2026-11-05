@@ -91,7 +91,7 @@ private func overlay(_ mode: OverlayMode, visible: Bool = true) -> OverlayState 
         var feed = ChartFeed()
         #expect(feed.beginFetch(for: overlay(.expanded(.m1)), now: t0) == .m1)
         #expect(feed.beginFetch(for: overlay(.expanded(.m1)), now: t0.addingTimeInterval(600)) == nil)
-        #expect(feed[.m1] == .loading(last: nil))
+        #expect(feed[.m1].inFlight && feed[.m1].series == nil)
     }
 
     @Test(arguments: Timeframe.allCases)
@@ -99,8 +99,8 @@ private func overlay(_ mode: OverlayMode, visible: Bool = true) -> OverlayState 
         var feed = ChartFeed()
         let refresh = TimeInterval(timeframe.spec.refreshSeconds)
         _ = feed.beginFetch(for: overlay(.expanded(timeframe)), now: t0)
-        feed.finish(timeframe, candles: candles, at: t0)
-        #expect(feed[timeframe] == .loaded(CandleSeries(candles: candles, fetchedAt: t0)))
+        feed.finish(timeframe, .success(candles), at: t0)
+        #expect(feed[timeframe].series == CandleSeries(candles: candles, fetchedAt: t0) && feed[timeframe].notice(for: timeframe) == nil)
         #expect(feed.beginFetch(for: overlay(.expanded(timeframe)), now: t0.addingTimeInterval(refresh - 1)) == nil)
         #expect(feed.beginFetch(for: overlay(.expanded(timeframe)), now: t0.addingTimeInterval(refresh)) == timeframe)
         #expect(feed[timeframe].series?.candles == candles, "a refresh keeps showing the last candles")
@@ -109,9 +109,9 @@ private func overlay(_ mode: OverlayMode, visible: Bool = true) -> OverlayState 
     @Test func switchingBackRefetchesOnlyWhenStale() {
         var feed = ChartFeed()
         _ = feed.beginFetch(for: overlay(.expanded(.m1)), now: t0)
-        feed.finish(.m1, candles: candles, at: t0)
+        feed.finish(.m1, .success(candles), at: t0)
         #expect(feed.beginFetch(for: overlay(.expanded(.h4)), now: t0.addingTimeInterval(1)) == .h4)
-        feed.finish(.h4, candles: candles, at: t0.addingTimeInterval(2))
+        feed.finish(.h4, .success(candles), at: t0.addingTimeInterval(2))
         #expect(feed.beginFetch(for: overlay(.expanded(.m1)), now: t0.addingTimeInterval(5)) == nil)
         #expect(feed.beginFetch(for: overlay(.expanded(.m1)), now: t0.addingTimeInterval(20)) == .m1)
     }
@@ -119,10 +119,10 @@ private func overlay(_ mode: OverlayMode, visible: Bool = true) -> OverlayState 
     @Test func aFailureKeepsTheLastCandlesAndRetries() {
         var feed = ChartFeed()
         _ = feed.beginFetch(for: overlay(.expanded(.h4)), now: t0)
-        feed.finish(.h4, candles: candles, at: t0)
+        feed.finish(.h4, .success(candles), at: t0)
         let later = t0.addingTimeInterval(300)
         _ = feed.beginFetch(for: overlay(.expanded(.h4)), now: later)
-        feed.finish(.h4, candles: nil, at: later)
+        feed.finish(.h4, .failure(.unreachable), at: later)
         #expect(feed[.h4].name == "failed")
         #expect(feed[.h4].series?.candles == candles)
         #expect(feed.beginFetch(for: overlay(.expanded(.h4)), now: later.addingTimeInterval(CandleLoad.retryAfterFailure - 1)) == nil)
@@ -131,8 +131,45 @@ private func overlay(_ mode: OverlayMode, visible: Bool = true) -> OverlayState 
 
     @Test func aCompletionWithNoRequestInFlightIsIgnored() {
         var feed = ChartFeed()
-        feed.finish(.m15, candles: candles, at: t0)
+        feed.finish(.m15, .success(candles), at: t0)
         #expect(feed[.m15] == .idle)
+    }
+
+    @Test func oldCandlesAreMarkedStaleFromAFailedRefreshUntilOneSucceeds() {
+        var feed = ChartFeed()
+        _ = feed.beginFetch(for: overlay(.expanded(.m1)), now: t0)
+        feed.finish(.m1, .success(candles), at: t0)
+        #expect(feed[.m1].notice(for: .m1) == nil)
+        let refresh = t0.addingTimeInterval(60)
+        _ = feed.beginFetch(for: overlay(.expanded(.m1)), now: refresh)
+        feed.finish(.m1, .failure(.unreachable), at: refresh)
+        #expect(feed[.m1].notice(for: .m1) == .stale("Stale: Kraken is not answering"))
+        _ = feed.beginFetch(for: overlay(.expanded(.m1)), now: refresh.addingTimeInterval(CandleLoad.retryAfterFailure))
+        #expect(feed[.m1].notice(for: .m1) == .stale("Stale: Kraken is not answering"), "still stale while the retry is out")
+        feed.finish(.m1, .success(candles), at: refresh.addingTimeInterval(11))
+        #expect(feed[.m1].notice(for: .m1) == nil)
+    }
+
+    @Test(arguments: [
+        (FetchFailure.unreachable, "Kraken is not answering"),
+        (.status(503), "Kraken answered HTTP 503"),
+        (.rejected(.malformed("OHLC row 3")), "Kraken sent candles this app cannot read"),
+        (.rejected(.invalidValue("row 3 high/low do not bound open/close")), "Kraken sent candles this app cannot read"),
+        (.rejected(.api(["EGeneral:Too many requests"])), "Kraken refused: EGeneral:Too many requests"),
+    ])
+    func theMessageNamesWhatWentWrong(failure: FetchFailure, message: String) {
+        var feed = ChartFeed()
+        _ = feed.beginFetch(for: overlay(.expanded(.h4)), now: t0)
+        feed.finish(.h4, .failure(failure), at: t0)
+        #expect(feed[.h4].notice(for: .h4) == .placeholder("\(message), retrying"))
+    }
+
+    @Test func withNothingToDrawThePlaceholderSaysWhy() {
+        var feed = ChartFeed()
+        #expect(feed[.m15].notice(for: .m15) == .placeholder("Loading 15m candles"))
+        _ = feed.beginFetch(for: overlay(.expanded(.m15)), now: t0)
+        feed.finish(.m15, .success([]), at: t0)
+        #expect(feed[.m15].notice(for: .m15) == .placeholder("No 15m candles"))
     }
 }
 

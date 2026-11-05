@@ -77,7 +77,7 @@ final class OverlayController {
                 chart: CGSize(width: settings.chartWidth, height: settings.chartHeight),
                 screen: screen?.visible ?? ticker
             )
-            view.expand(layout, timeframe: timeframe, chart: chart, placeholder: Self.placeholder(load, timeframe))
+            view.expand(layout, timeframe: timeframe, chart: chart, notice: load?.notice(for: timeframe))
             frame = layout.frame
         } else {
             view.collapse()
@@ -90,14 +90,6 @@ final class OverlayController {
             panel.orderOut(nil)
         }
         writeSnapshot(display: display, overlay: overlay, load: load, candles: chart?.bars.count ?? 0)
-    }
-
-    private static func placeholder(_ load: CandleLoad?, _ timeframe: Timeframe) -> String {
-        switch load {
-        case .failed: "Kraken is not answering, retrying"
-        case .loaded: "No \(timeframe.spec.label) candles"
-        default: "Loading \(timeframe.spec.label) candles"
-        }
     }
 
     private func click(at point: CGPoint) {
@@ -188,14 +180,14 @@ final class OverlayView: NSView {
         return NSSize(width: ceil(widest) + 14, height: min(ceil(height) + 6, tickerSize.height))
     }
 
-    func expand(_ layout: ExpandedLayout, timeframe: Timeframe, chart: CandleChart?, placeholder: String) {
+    func expand(_ layout: ExpandedLayout, timeframe: Timeframe, chart: CandleChart?, notice: ChartNotice?) {
         expanded = (layout, timeframe)
         chartHost.frame = layout.chart
         chartHost.isHidden = false
         let plotWidth = layout.chart.width - 60
         chartHost.rootView = CandleChartView(
             chart: chart,
-            placeholder: placeholder,
+            notice: notice,
             settings: settings,
             bodyWidth: max(1, plotWidth / Double(max(chart?.bars.count ?? 1, 1)) * 0.7)
         )
