@@ -84,13 +84,23 @@ impl Rect {
     }
 
     pub fn intersection_area(&self, other: &Rect) -> f64 {
-        let width = self.max_x().min(other.max_x()) - self.x.max(other.x);
-        let height = self.max_y().min(other.max_y()) - self.y.max(other.y);
-        if width > 0.0 && height > 0.0 {
-            width * height
-        } else {
-            0.0
-        }
+        self.intersection(other)
+            .map_or(0.0, |common| common.width * common.height)
+    }
+
+    /// None only when the rects are apart, as CGRect's null intersection: rects sharing just an edge or a corner
+    /// intersect in an empty rect.
+    pub fn intersection(&self, other: &Rect) -> Option<Rect> {
+        let x = self.x.max(other.x);
+        let y = self.y.max(other.y);
+        let width = self.max_x().min(other.max_x()) - x;
+        let height = self.max_y().min(other.max_y()) - y;
+        (width >= 0.0 && height >= 0.0).then_some(Rect {
+            x,
+            y,
+            width,
+            height,
+        })
     }
 
     pub fn offset(&self, by: Point) -> Rect {
@@ -131,13 +141,16 @@ pub mod placement {
         height: 12.0,
     };
 
-    /// The screen the rect overlaps most, or None when it overlaps none.
+    /// The screen the rect overlaps most, the first of equals, as Layout.swift's `screen(for:in:)`. A screen the
+    /// rect only touches counts, with no area; None when the rect is apart from every screen.
     pub fn screen_for<'a>(rect: &Rect, screens: &'a [ScreenArea]) -> Option<&'a ScreenArea> {
         screens
             .iter()
-            .map(|screen| (screen, rect.intersection_area(&screen.frame)))
-            .filter(|(_, area)| *area > 0.0)
-            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .filter_map(|screen| {
+                let common = rect.intersection(&screen.frame)?;
+                Some((screen, common.width * common.height))
+            })
+            .reduce(|best, next| if next.1 > best.1 { next } else { best })
             .map(|(screen, _)| screen)
     }
 

@@ -99,6 +99,39 @@ mod ticker_placement {
         assert!(laptop().work.contains_rect(&placed(1728.0 - 140.0, 300.0)));
     }
 
+    /// Swift's `max(by:)` keeps the first of equal overlaps.
+    #[test]
+    fn a_ticker_split_evenly_between_two_screens_goes_to_the_first() {
+        assert_eq!(placed(1728.0 - 90.0, 300.0).max_x(), 1728.0);
+        let reversed = placement::frame(
+            Some(ScreenPoint {
+                x: 1728.0 - 90.0,
+                y: 300.0,
+            }),
+            SIZE,
+            &[external(), laptop()],
+        );
+        assert_eq!(reversed.x, 1728.0);
+    }
+
+    /// CGRect.intersection of rects that share only an edge or a corner is an empty rect, not null, so Swift still
+    /// counts that screen.
+    #[test]
+    fn a_ticker_touching_a_screen_only_at_an_edge_is_pulled_onto_it() {
+        let alone = [laptop()];
+        let at = |x: f64, y: f64| placement::frame(Some(ScreenPoint { x, y }), SIZE, &alone);
+        assert_eq!(at(1728.0, 300.0), rect(1728.0 - 180.0, 300.0, 180.0, 27.0));
+        assert_eq!(
+            at(1728.0, 1117.0),
+            rect(1728.0 - 180.0, 1069.0 - 27.0, 180.0, 27.0)
+        );
+        assert_eq!(
+            at(1729.0, 300.0),
+            placement::frame(None, SIZE, &alone),
+            "a gap is no overlap"
+        );
+    }
+
     #[test]
     fn a_spot_on_a_display_that_is_gone_falls_back_to_the_default() {
         assert_eq!(
