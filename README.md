@@ -37,3 +37,18 @@ Settings are stored in the `dev.local.btcticker` defaults domain. A saved positi
 - End-to-end checks against the built app with a live Kraken feed. They check that the window sits on a higher layer than the WoW window, that WoW stays frontmost, that every timeframe loads its candles, that scrolling zooms out to every candle and back, and that the panel catches clicks even at opacity 0. They also save screenshots to `build/expanded-*.png`.
 
 The end-to-end clicks and scrolls are synthesized `NSEvent`s sent through the panel, not real mouse input, and the check's name says so. Real input needs Accessibility permission for the terminal that runs the script. The `e2e-above-wow` check needs a WoW window under the ticker.
+
+## Windows
+
+A native Windows 11 port lives in `windows/`: the pure `ticker-core` crate decides everything, and `btc-ticker` is the Win32 shell around it. It needs only the Rust toolchain (1.98 or later, MSVC target), with no C compiler or resource compiler.
+
+```powershell
+cd windows; cargo build --release
+.\target\release\btc-ticker.exe
+```
+
+The ticker starts at the top center of the primary monitor. Right-click it, or the orange "B" in the notification area, for Settings, Lock/Unlock Position and Quit. Windows 11 puts a new tray icon in the overflow, behind the `^` arrow, until you pin it. Run WoW in **Windowed (Fullscreen)** mode, since exclusive fullscreen can hide overlays.
+
+Settings are stored as JSON in `%APPDATA%\BTCTicker\settings.json` and apply as soon as the file changes, including edits made by hand. Positions are physical pixels on the virtual screen, so the file is not interchangeable with the macOS app's.
+
+`powershell -NoProfile -ExecutionPolicy Bypass -File windows\scripts\verify.ps1`, run from the repo root, is the Windows loop's exit condition. It builds with warnings denied, runs clippy and the core's unit tests and model checks, then runs `btc-ticker-e2e` against the release exe. That end-to-end check covers the primary monitor with a stand-in game window, a copy of itself named `Wow.exe`, for about a minute and drives the app with real mouse input through `SendInput`. Don't touch the mouse while it runs: it refuses to click any window but its own and the app's, and it reports INCONCLUSIVE if it sees presses it did not send. It saves screenshots of the collapsed ticker, each timeframe's chart and the Settings window to `windows/target/verify/*.png`. The app it launches uses a throwaway settings file, never yours.
