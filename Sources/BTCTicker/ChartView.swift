@@ -2,10 +2,10 @@ import AppKit
 import TickerCore
 
 final class CandleChartView: PaintedView {
-    var chart: CandleChart?
-    var notice: ChartNotice?
-    var settings = TickerCore.Settings()
-    var bodyWidth = 2.0
+    var chart: CandleChart? { didSet { if chart != oldValue { needsDisplay = true } } }
+    var notice: ChartNotice? { didSet { if notice != oldValue { needsDisplay = true } } }
+    var settings = TickerCore.Settings() { didSet { if settings != oldValue { needsDisplay = true } } }
+    var bodyWidth = 2.0 { didSet { if bodyWidth != oldValue { needsDisplay = true } } }
 
     private static let labelFont = NSFont.systemFont(ofSize: 10)
     private static let staleFont = NSFont.systemFont(ofSize: 10, weight: .semibold)

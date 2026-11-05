@@ -15,6 +15,11 @@ class PaintedView: NSView {
 
     override var wantsUpdateLayer: Bool { true }
 
+    override func setFrameSize(_ newSize: NSSize) {
+        if newSize != frame.size { needsDisplay = true }
+        super.setFrameSize(newSize)
+    }
+
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         needsDisplay = true

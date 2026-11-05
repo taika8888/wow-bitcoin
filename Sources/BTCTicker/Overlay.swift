@@ -104,7 +104,7 @@ final class OverlayController {
             view.collapse()
         }
         if overlay.drag == .dragging { frame.origin = panel.frame.origin }
-        panel.setFrame(frame, display: true)
+        panel.setFrame(frame, display: false)
         if overlay.isVisible {
             panel.orderFrontRegardless()
         } else {
@@ -212,11 +212,11 @@ final class OverlayView: PaintedView {
                 .foregroundColor: NSColor(color).withAlphaComponent(color.alpha * fade),
             ]))
         }
+        if runs != text || settings != self.settings { needsDisplay = true }
         text = runs
         self.settings = settings
         let size = text.size()
         tickerSize = NSSize(width: ceil(size.width) + padding.width * 2, height: ceil(size.height) + padding.height * 2)
-        needsDisplay = true
         return tickerSize
     }
 
@@ -227,6 +227,7 @@ final class OverlayView: PaintedView {
     }
 
     func expand(_ layout: ExpandedLayout, timeframe: Timeframe, chart: CandleChart?, notice: ChartNotice?) {
+        if expanded?.layout != layout || expanded?.timeframe != timeframe { needsDisplay = true }
         expanded = (layout, timeframe)
         let chartView = self.chartView ?? CandleChartView()
         if self.chartView == nil {
@@ -238,11 +239,10 @@ final class OverlayView: PaintedView {
         chartView.notice = notice
         chartView.settings = settings
         chartView.bodyWidth = max(1, layout.plotWidth / Double(max(chart?.bars.count ?? 1, 1)) * 0.7)
-        chartView.needsDisplay = true
-        needsDisplay = true
     }
 
     func collapse() {
+        guard expanded != nil else { return }
         expanded = nil
         chartView?.removeFromSuperview()
         chartView = nil
