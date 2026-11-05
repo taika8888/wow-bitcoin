@@ -3,3 +3,4 @@ build/
 .swiftpm/
 .DS_Store
 decisions.tsv
+windows/target/
