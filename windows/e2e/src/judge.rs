@@ -381,6 +381,12 @@ pub fn topmost_recovers(seen_below: bool, recovered_ms: Option<u64>, bound_ms: u
     }
 }
 
+/// Where a ticker with no saved position sits: centered at the top of the work area, clear of WoW's minimap.
+pub fn at_default_spot(frame: &Rect, work: &Rect, scale: f64) -> bool {
+    let top = work.y + (ticker_core::placement::MARGIN.height * scale).round();
+    (frame.mid().x - work.mid().x).abs() <= 1.0 && (frame.y - top).abs() < 1.0
+}
+
 pub fn clamped(frame: &Rect, work: &Rect) -> bool {
     (frame.max_x() - work.max_x()).abs() < 1.0
         && (frame.y - work.y).abs() < 1.0
@@ -502,8 +508,9 @@ pub fn wow_gate(f: &GateFacts) -> Verdict {
             "the overlay stayed hidden after Wow.exe took the foreground back".into(),
         ),
         (true, Some(hidden), true, Some(shown)) => Verdict::Pass(format!(
-            "with onlyWhenWoWActive, hidden {hidden} ms after Other.exe took the foreground and shown {shown} ms \
-             after Wow.exe took it back, per the snapshot and IsWindowVisible"
+            "with onlyWhenWoWActive, hidden within {hidden} ms of the click that gave Other.exe the foreground \
+             and shown within {shown} ms of the click that gave it back to Wow.exe, per the snapshot and \
+             IsWindowVisible"
         )),
     }
 }

@@ -547,17 +547,17 @@ impl Harness<'_> {
             |shown: bool| move |s: &Snapshot| s.visible == shown && os::visible(overlay) == shown;
         self.helper.raise();
         let (x, y, width, height) = Role::Helper.rect(self.screen);
+        let started = Instant::now();
         let helper_took_foreground = os::click(x + width / 2, y + height / 2, Button::Left).is_ok()
             && wait_until(3.0, || (os::foreground() == self.helper.hwnd).then_some(())).is_some();
-        let started = Instant::now();
         let hidden_ms = helper_took_foreground
             .then(|| self.wait(5.0, visible(false)))
             .flatten()
             .map(|_| started.elapsed().as_millis() as u64);
         let (sx, sy) = self.standin_point();
+        let started = Instant::now();
         let standin_took_foreground = os::click(sx, sy, Button::Left).is_ok()
             && wait_until(3.0, || (os::foreground() == self.game.hwnd).then_some(())).is_some();
-        let started = Instant::now();
         let shown_ms = self
             .wait(5.0, visible(true))
             .map(|_| started.elapsed().as_millis() as u64);
@@ -618,6 +618,7 @@ impl Harness<'_> {
     }
 
     fn chart_checks(&mut self) -> Result<(), String> {
+        let work = os::monitor_of(self.overlay).map(|(_, work)| work);
         let ready = self.edit(&settings(json!({"timeframe": "h4"}))).is_ok()
             && self
                 .wait(5.0, |s| {
@@ -625,12 +626,15 @@ impl Harness<'_> {
                         && s.locked
                         && s.visible
                         && s.targets.contains_key("ticker")
-                        && judge::parse_ticker(&s.text).is_some_and(|t| t.label && t.decimals == 0)
+                        && work.is_some_and(|work| {
+                            judge::at_default_spot(&judge::rect(&s.frame), &work, s.scale)
+                        })
                 })
                 .is_some();
         if !ready {
             let detail = format!(
-                "the collapsed, locked ticker never came back; {}",
+                "with no saved position the locked ticker never came back to the top center of {:?}; {}",
+                work.map(|w| judge::describe(&w)),
                 self.last()
             );
             self.record(Check::Expand, Verdict::Fail(detail.clone()));

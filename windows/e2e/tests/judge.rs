@@ -431,6 +431,37 @@ mod window {
     }
 
     #[test]
+    fn the_default_spot_is_top_center_of_the_work_area() {
+        let work = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 1024.0,
+            height: 720.0,
+        };
+        let ticker = Rect {
+            x: 430.0,
+            y: 12.0,
+            width: 164.0,
+            height: 29.0,
+        };
+        assert!(judge::at_default_spot(&ticker, &work, 1.0));
+        assert!(!judge::at_default_spot(
+            &Rect {
+                x: 860.0,
+                y: 0.0,
+                ..ticker
+            },
+            &work,
+            1.0
+        ));
+        assert!(judge::at_default_spot(
+            &Rect { y: 18.0, ..ticker },
+            &work,
+            1.5
+        ));
+    }
+
+    #[test]
     fn clamped_means_flush_with_the_corner_and_inside() {
         let work = Rect {
             x: 0.0,
