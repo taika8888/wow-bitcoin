@@ -79,6 +79,7 @@ struct Snapshot {
     let activations: Int
     let opacity: Double
     let fetchedAt: Double?
+    let shortcuts: [String]
 
     static func read() -> Snapshot? {
         guard let data = try? Data(contentsOf: stateURL),
@@ -99,7 +100,8 @@ struct Snapshot {
             targets: (json["targets"] as? [String: Any] ?? [:]).compactMapValues(rect),
             activations: json["activations"] as? Int ?? -1,
             opacity: json["opacity"] as? Double ?? -1,
-            fetchedAt: json["fetchedAt"] as? Double
+            fetchedAt: json["fetchedAt"] as? Double,
+            shortcuts: json["shortcuts"] as? [String] ?? []
         )
     }
 }
@@ -203,6 +205,11 @@ if let firstFetch = live?.fetchedAt {
 } else {
     report("FAIL", "refresh-restarts", "no live quote with a fetch time to start from")
 }
+
+let shortcuts = Snapshot.read()?.shortcuts ?? []
+let missingShortcuts = ["cmd-w performClose:", "cmd-q terminate:"].filter { !shortcuts.contains($0) }
+report(missingShortcuts.isEmpty ? "PASS" : "FAIL", "main-menu (wiring only, no keystroke sent)",
+       missingShortcuts.isEmpty ? "main menu dispatches \(shortcuts.joined(separator: ", "))" : "main menu lacks \(missingShortcuts.joined(separator: ", ")); has \(shortcuts)")
 
 let current = Snapshot.read()
 let windows = onScreenWindows()

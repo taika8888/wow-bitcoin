@@ -109,10 +109,18 @@ final class OverlayController {
         Snapshot.Frame(x: rect.minX, y: primaryHeight - rect.maxY, width: rect.width, height: rect.height)
     }
 
+    private static func shortcuts(in menu: NSMenu?) -> [String] {
+        (menu?.items ?? []).flatMap { item in
+            let own = item.keyEquivalent.isEmpty || item.keyEquivalentModifierMask != .command ? []
+                : ["cmd-\(item.keyEquivalent) \(item.action.map(NSStringFromSelector) ?? "none")"]
+            return own + shortcuts(in: item.submenu)
+        }
+    }
+
     private func writeSnapshot(display: TickerDisplay, overlay: OverlayState, load: CandleLoad?, candles: Int) {
         guard let stateFile else { return }
         let origin = panel.frame.origin
-        let snapshot = Snapshot(
+        var snapshot = Snapshot(
             display: display,
             status: model.status,
             overlay: overlay,
@@ -123,6 +131,7 @@ final class OverlayController {
             targets: view.targets.mapValues { globalFrame($0.offsetBy(dx: origin.x, dy: origin.y)) },
             activations: activations
         )
+        snapshot.shortcuts = Self.shortcuts(in: NSApp.mainMenu)
         let data = snapshot.json
         guard data != lastSnapshot else { return }
         lastSnapshot = data

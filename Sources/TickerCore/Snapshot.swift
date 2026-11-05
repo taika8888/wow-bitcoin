@@ -35,6 +35,8 @@ public struct Snapshot: Codable, Hashable, Sendable {
     public var targets: [String: Frame]
     /// How often this app became the active app. Clicking the overlay must never raise it.
     public var activations: Int
+    /// The main menu's shortcuts as "cmd-<key> <action>", so the check can see Close and Quit without typing.
+    public var shortcuts: [String] = []
 
     public init(
         display: TickerDisplay, status: FeedStatus, overlay: OverlayState, chart: CandleLoad?, candles: Int,

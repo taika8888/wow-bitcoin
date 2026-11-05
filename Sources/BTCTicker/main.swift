@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        NSApp.mainMenu = makeMainMenu()
         let environment = ProcessInfo.processInfo.environment
         let menu = makeMenu()
         model = AppModel(store: SettingsStore(environment: environment), frontmost: Frontmost(NSWorkspace.shared.frontmostApplication))
@@ -57,6 +58,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(lockItem)
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit BTC Ticker", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        return menu
+    }
+
+    /// Never shown, since the app has no Dock icon, but it is where Cmd-W and Cmd-Q in the Settings window are looked up.
+    private func makeMainMenu() -> NSMenu {
+        let appMenu = NSMenu()
+        appMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        appMenu.addItem(withTitle: "Quit BTC Ticker", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        let menu = NSMenu()
+        menu.addItem(withTitle: "BTC Ticker", action: nil, keyEquivalent: "").submenu = appMenu
         return menu
     }
 
