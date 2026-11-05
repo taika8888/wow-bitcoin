@@ -31,8 +31,10 @@ pub enum HttpReply {
 pub enum PointerInput {
     LeftDown(Point),
     Move(Point),
-    /// Also sent when capture is lost mid-press, so the press always ends.
     LeftUp(Point),
+    /// WM_CAPTURECHANGED mid-press (Alt-Tab, a UAC prompt): the press ends without a click, and a drag drops at
+    /// the cursor.
+    CaptureLost(Point),
     RightUp(Point),
     /// WM_MOUSELEAVE.
     Left,
@@ -324,7 +326,7 @@ impl<M: Measure> App<M> {
                     self.send(OverlayEvent::PointerMoved { distance });
                 }
             }
-            PointerInput::LeftUp(at) => {
+            PointerInput::LeftUp(at) | PointerInput::CaptureLost(at) => {
                 let Some(gesture) = &mut self.gesture else {
                     return;
                 };
@@ -339,7 +341,10 @@ impl<M: Measure> App<M> {
                 let landed = placement::screen_for(&ticker, &env.screens)
                     .or_else(|| placement::screen_for(&window, &env.screens))
                     .map_or(ticker, |screen| placement::clamp(ticker, &screen.work));
-                let over = presented.hit(at);
+                let over = match input {
+                    PointerInput::LeftUp(_) => presented.hit(at),
+                    _ => PressTarget::Outside,
+                };
                 let menu_click = self.overlay.menu_open && self.overlay.drag == DragPhase::Pressed;
                 self.send(OverlayEvent::Released {
                     over,

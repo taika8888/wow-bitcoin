@@ -285,10 +285,9 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
         }
         WM_LBUTTONUP => pointer(PointerInput::LeftUp(message_point())),
         WM_RBUTTONUP => pointer(PointerInput::RightUp(message_point())),
-        // Capture taken away mid-press (Alt-Tab, a UAC prompt) ends the press where the cursor is; `App` ignores it
-        // when no press is under way, which covers our own ReleaseCapture.
+        // `App` ignores it when no press is under way, which covers our own ReleaseCapture.
         WM_CAPTURECHANGED if lparam.0 != hwnd.0 as isize => {
-            pointer(PointerInput::LeftUp(cursor_point()))
+            pointer(PointerInput::CaptureLost(cursor_point()))
         }
         // Must never happen; counted into the snapshot so the e2e can assert 0.
         WM_ACTIVATE => {

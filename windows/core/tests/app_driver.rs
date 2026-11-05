@@ -509,6 +509,42 @@ mod pointer {
     }
 
     #[test]
+    fn losing_the_capture_mid_press_ends_the_press_without_a_click() {
+        let mut driver = Driver::live(Settings::default());
+        let press = driver.target("ticker");
+        driver.pointer(PointerInput::LeftDown(press));
+        let lost = driver.pointer(PointerInput::CaptureLost(press));
+        assert_eq!(lost.capture, Some(false), "the press is over");
+        assert_eq!(lost.save_settings, None);
+        assert_eq!(driver.snapshot().mode, "collapsed", "no click on the body");
+        driver.pointer(PointerInput::LeftUp(press));
+        assert_eq!(
+            driver.snapshot().mode,
+            "collapsed",
+            "the later up is no click either"
+        );
+    }
+
+    #[test]
+    fn losing_the_capture_mid_drag_drops_the_ticker_at_the_cursor() {
+        let mut driver = Driver::live(Settings::default());
+        let start = driver.frame.window;
+        let press = driver.target("ticker");
+        let cursor = Point {
+            x: press.x - 300.0,
+            y: press.y + 200.0,
+        };
+        driver.pointer(PointerInput::LeftDown(press));
+        driver.pointer(PointerInput::Move(cursor));
+        let lost = driver.pointer(PointerInput::CaptureLost(cursor));
+        let saved = Settings::decode(lost.save_settings.as_deref())
+            .position
+            .expect("the drop is saved");
+        assert_eq!((saved.x, saved.y), (start.x - 300.0, start.y + 200.0));
+        assert_eq!(driver.snapshot().mode, "collapsed");
+    }
+
+    #[test]
     fn a_press_outside_the_window_is_ignored() {
         let mut driver = Driver::live(Settings::default());
         let outside = Point {
@@ -613,6 +649,18 @@ mod menu {
             snapshot.mode, "collapsed",
             "the closing click does not open the chart"
         );
+    }
+
+    #[test]
+    fn losing_the_capture_over_a_menu_item_closes_the_menu_without_choosing_it() {
+        let mut driver = Driver::live(Settings::default());
+        open(&mut driver);
+        let lock = driver.target("menu:lock");
+        driver.pointer(PointerInput::LeftDown(lock));
+        let lost = driver.pointer(PointerInput::CaptureLost(lock));
+        assert_eq!(lost.save_settings, None, "Lock is not chosen");
+        let snapshot = driver.snapshot();
+        assert!(!snapshot.menu_open && !snapshot.locked);
     }
 
     #[test]
