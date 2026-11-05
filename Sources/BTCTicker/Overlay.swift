@@ -8,7 +8,6 @@ final class OverlayPanel: NSPanel {
         level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         hidesOnDeactivate = false
-        isFloatingPanel = true
         becomesKeyOnlyIfNeeded = true
         isOpaque = false
         backgroundColor = .clear
