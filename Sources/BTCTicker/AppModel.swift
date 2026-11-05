@@ -10,6 +10,7 @@ final class AppModel {
     @ObservationIgnored var onChange: () -> Void = {}
     @ObservationIgnored private var lastGood: Quote?
     @ObservationIgnored private var schedule = FeedSchedule()
+    @ObservationIgnored private var feedWait: Task<Void, any Error>?
     @ObservationIgnored private let startedAt = Date()
     @ObservationIgnored private let store: SettingsStore
     @ObservationIgnored private let session = URLSession(configuration: .ephemeral)
@@ -24,7 +25,9 @@ final class AppModel {
         let next = OverlayState.reduce(overlay, event)
         guard next != overlay else { return }
         if next.settings != overlay.settings { store.save(next.settings) }
+        let retimed = next.settings.refreshSeconds != overlay.settings.refreshSeconds
         overlay = next
+        if retimed { rescheduleFeed() }
         status = derivedStatus()
         onChange()
         pumpCharts()
@@ -50,9 +53,23 @@ final class AppModel {
                 FileHandle.standardError.write(Data("quote fetch failed (\(schedule.failures) in a row): \(error)\n".utf8))
             }
             tick()
-            let wait = schedule.nextStart(refreshSeconds: overlay.settings.refreshSeconds).timeIntervalSinceNow
-            if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
+            await waitForNextFetch()
         }
+    }
+
+    /// `rescheduleFeed()` cuts the sleep short so the wait is measured again against the current settings and schedule.
+    private func waitForNextFetch() async {
+        while true {
+            let wait = schedule.nextStart(refreshSeconds: overlay.settings.refreshSeconds).timeIntervalSinceNow
+            guard wait > 0 else { return }
+            let sleep = Task { try await Task.sleep(for: .seconds(wait)) }
+            feedWait = sleep
+            if (try? await sleep.value) != nil { return }
+        }
+    }
+
+    private func rescheduleFeed() {
+        feedWait?.cancel()
     }
 
     /// Re-derives the status between fetches so a quote turns stale on time.

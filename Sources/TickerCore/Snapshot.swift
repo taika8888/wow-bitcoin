@@ -19,6 +19,8 @@ public struct Snapshot: Codable, Hashable, Sendable {
 
     public var text: String
     public var feed: String
+    /// When the quote on screen was fetched, in seconds since 1970.
+    public var fetchedAt: Double?
     public var mode: String
     public var locked: Bool
     public var opacity: Double
@@ -40,6 +42,8 @@ public struct Snapshot: Codable, Hashable, Sendable {
     ) {
         text = display.text
         feed = status.name
+        if case .live(let quote) = status { fetchedAt = quote.fetchedAt.timeIntervalSince1970 }
+        if case .stale(let quote) = status { fetchedAt = quote.fetchedAt.timeIntervalSince1970 }
         mode = overlay.mode.name
         locked = overlay.settings.locked
         opacity = overlay.settings.opacity

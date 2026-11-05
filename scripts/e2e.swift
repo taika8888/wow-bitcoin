@@ -78,6 +78,7 @@ struct Snapshot {
     let targets: [String: CGRect]
     let activations: Int
     let opacity: Double
+    let fetchedAt: Double?
 
     static func read() -> Snapshot? {
         guard let data = try? Data(contentsOf: stateURL),
@@ -97,7 +98,8 @@ struct Snapshot {
             candles: json["candles"] as? Int ?? 0,
             targets: (json["targets"] as? [String: Any] ?? [:]).compactMapValues(rect),
             activations: json["activations"] as? Int ?? -1,
-            opacity: json["opacity"] as? Double ?? -1
+            opacity: json["opacity"] as? Double ?? -1,
+            fetchedAt: json["fetchedAt"] as? Double
         )
     }
 }
@@ -162,7 +164,7 @@ let app = Process()
 app.executableURL = appURL.appendingPathComponent("Contents/MacOS/BTCTicker")
 app.environment = ProcessInfo.processInfo.environment.merging([
     "BTCTICKER_STATE_FILE": stateURL.path,
-    "BTCTICKER_SETTINGS": #"{"showLabel":true,"showChange":true,"decimals":0,"fontSize":15,"locked":false,"onlyWhenWoWActive":false}"#,
+    "BTCTICKER_SETTINGS": #"{"showLabel":true,"showChange":true,"decimals":0,"fontSize":15,"locked":false,"onlyWhenWoWActive":false,"refreshSeconds":300}"#,
 ]) { $1 }
 do {
     try app.run()
@@ -187,6 +189,19 @@ if let live, let shown = price(in: live.text) {
 } else {
     let last = Snapshot.read()
     report("FAIL", "live-quote", "no live snapshot matching the price format within 20s; last: \(last.map { "\($0.feed) '\($0.text)'" } ?? "none")")
+}
+
+if let firstFetch = live?.fetchedAt {
+    writeSettings(#"{"showLabel":true,"showChange":true,"decimals":0,"fontSize":15,"locked":false,"onlyWhenWoWActive":false,"refreshSeconds":2}"#)
+    let edited = Date()
+    let refetched = waitFor(4) { Snapshot.read().flatMap { ($0.fetchedAt ?? 0) > firstFetch ? $0 : nil } }
+    if let refetched, let at = refetched.fetchedAt {
+        report("PASS", "refresh-restarts", "refresh 300s -> 2s: a new quote landed \(String(format: "%.1f", at - edited.timeIntervalSince1970))s after the edit, \(String(format: "%.1f", at - firstFetch))s after the first")
+    } else {
+        report("FAIL", "refresh-restarts", "refresh 300s -> 2s: no new quote within 4s of the edit; still the one fetched at \(firstFetch)")
+    }
+} else {
+    report("FAIL", "refresh-restarts", "no live quote with a fetch time to start from")
 }
 
 let current = Snapshot.read()
