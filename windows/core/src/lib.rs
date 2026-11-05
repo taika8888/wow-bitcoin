@@ -3,6 +3,7 @@
 mod chart;
 mod display;
 mod feed;
+mod layout;
 mod market;
 mod overlay;
 mod settings;
@@ -16,6 +17,7 @@ pub use chart::{
 pub use display::{Segment, TickerDisplay, Tone, format_change, format_price};
 pub use feed::{FeedSchedule, FeedStatus};
 pub use kraken::KrakenError;
+pub use layout::{ExpandedLayout, Point, Rect, ScreenArea, Size, placement};
 pub use market::{Candle, Quote, Time, Timeframe, TimeframeSpec};
 pub use overlay::{
     DragPhase, Frontmost, MenuItem, OverlayEvent, OverlayMode, OverlayState, PressTarget, reduce,
