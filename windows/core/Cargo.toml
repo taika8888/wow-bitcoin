@@ -1,0 +1,13 @@
+[package]
+name = "ticker-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Everything BTC Ticker decides, with no platform code: Kraken parsing, settings, feed, chart, layout, the overlay reducer and the app driver."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
