@@ -11,6 +11,9 @@ ticker-core = { path = "../ticker-core" }
 serde_json.workspace = true
 windows-numerics = "0.3.1"
 
+[dev-dependencies]
+png = "0.18.1"
+
 [dependencies.windows]
 workspace = true
 features = [
