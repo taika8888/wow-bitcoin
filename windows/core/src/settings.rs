@@ -1,6 +1,7 @@
 use crate::market::Timeframe;
 use serde::{Serialize, Serializer};
-use serde_json::{Map, Value};
+use serde_json::value::RawValue;
+use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -86,31 +87,35 @@ impl Settings {
     pub const CHART_HEIGHT: RangeInclusive<f64> = 120.0..=600.0;
 
     /// Missing, mistyped or out-of-range keys fall back to the default or the nearest bound, key by key, so an old
-    /// or hand-edited blob still loads. Written by hand because serde's derive rejects the whole struct on one bad key.
+    /// or hand-edited blob still loads. Each key is parsed from its own raw text, as Swift's JSONDecoder does, so a
+    /// number no f64 can hold fails only its key; serde's derive and `Value` would reject the whole blob.
     pub fn decode(json: Option<&str>) -> Settings {
         let defaults = Settings::default();
-        let Some(Ok(Value::Object(blob))) = json.map(serde_json::from_str::<Value>) else {
+        let Some(blob) = json.and_then(object) else {
             return defaults;
         };
-        let get = |key: &str| blob.get(key);
+        let get = |key: &str| blob.get(key).map(|raw| raw.get());
         let float = |key: &str, fallback: f64, range: RangeInclusive<f64>| {
             get(key)
-                .and_then(Value::as_f64)
+                .and_then(double)
                 .unwrap_or(fallback)
                 .clamp(*range.start(), *range.end())
         };
         let int = |key: &str, fallback: i64, range: (i64, i64)| {
             get(key)
-                .and_then(Value::as_i64)
+                .and_then(integer)
                 .unwrap_or(fallback)
                 .clamp(range.0, range.1)
         };
-        let flag =
-            |key: &str, fallback: bool| get(key).and_then(Value::as_bool).unwrap_or(fallback);
+        let flag = |key: &str, fallback: bool| {
+            get(key)
+                .and_then(|raw| serde_json::from_str(raw).ok())
+                .unwrap_or(fallback)
+        };
         let color = |key: &str, fallback: Rgba| {
             get(key)
-                .and_then(Value::as_object)
-                .and_then(rgba)
+                .and_then(object)
+                .and_then(|o| rgba(&o))
                 .unwrap_or(fallback)
                 .clamped()
         };
@@ -141,12 +146,12 @@ impl Settings {
             ) as u32,
             only_when_wow_active: flag("onlyWhenWoWActive", defaults.only_when_wow_active),
             position: get("position")
-                .and_then(Value::as_object)
-                .and_then(screen_point)
+                .and_then(object)
+                .and_then(|o| screen_point(&o))
                 .or(defaults.position),
             timeframe: get("timeframe")
-                .and_then(Value::as_str)
-                .and_then(Timeframe::from_raw)
+                .and_then(|raw| serde_json::from_str::<String>(raw).ok())
+                .and_then(|raw| Timeframe::from_raw(&raw))
                 .unwrap_or(defaults.timeframe),
             chart_width: float("chartWidth", defaults.chart_width, Self::CHART_WIDTH),
             chart_height: float("chartHeight", defaults.chart_height, Self::CHART_HEIGHT),
@@ -184,8 +189,34 @@ impl Default for Settings {
     }
 }
 
-fn rgba(object: &Map<String, Value>) -> Option<Rgba> {
-    let channel = |key: &str| object.get(key).and_then(Value::as_f64);
+/// A JSON object whose values are left unparsed, so one bad value cannot fail its siblings.
+type Object<'a> = BTreeMap<String, &'a RawValue>;
+
+fn object(json: &str) -> Option<Object<'_>> {
+    serde_json::from_str(json).ok()
+}
+
+/// Like Swift's Double: a number that overflows or underflows to zero is no number at all.
+fn double(json: &str) -> Option<f64> {
+    let value: f64 = serde_json::from_str(json).ok()?;
+    let mantissa = json.split(['e', 'E']).next().unwrap_or(json);
+    let underflow = value == 0.0 && mantissa.bytes().any(|b| matches!(b, b'1'..=b'9'));
+    (!underflow).then_some(value)
+}
+
+/// Like Swift's Int: an integer literal, or any number that is a whole value in i64 range, such as `2.0`.
+fn integer(json: &str) -> Option<i64> {
+    serde_json::from_str(json).ok().or_else(|| {
+        double(json)
+            .filter(|value| {
+                value.fract() == 0.0 && (i64::MIN as f64..i64::MAX as f64).contains(value)
+            })
+            .map(|value| value as i64)
+    })
+}
+
+fn rgba(object: &Object) -> Option<Rgba> {
+    let channel = |key: &str| object.get(key).and_then(|raw| double(raw.get()));
     Some(Rgba {
         red: channel("red")?,
         green: channel("green")?,
@@ -194,10 +225,11 @@ fn rgba(object: &Map<String, Value>) -> Option<Rgba> {
     })
 }
 
-fn screen_point(object: &Map<String, Value>) -> Option<ScreenPoint> {
+fn screen_point(object: &Object) -> Option<ScreenPoint> {
+    let coordinate = |key: &str| object.get(key).and_then(|raw| double(raw.get()));
     Some(ScreenPoint {
-        x: object.get("x").and_then(Value::as_f64)?,
-        y: object.get("y").and_then(Value::as_f64)?,
+        x: coordinate("x")?,
+        y: coordinate("y")?,
     })
 }
 

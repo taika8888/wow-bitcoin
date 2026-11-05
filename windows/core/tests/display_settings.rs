@@ -148,6 +148,55 @@ mod settings {
         assert!(!settings.show_label);
     }
 
+    /// Swift's JSONDecoder reads an Int from any number that is a whole value it can hold, written as a float or not.
+    #[test]
+    fn whole_numbers_written_as_floats_load_as_integers() {
+        let settings = Settings::decode(Some(r#"{"decimals":2.0,"refreshSeconds":3e1}"#));
+        assert_eq!((settings.decimals, settings.refresh_seconds), (2, 30));
+        let defaults = Settings::default();
+        for json in [
+            r#"{"decimals":2.5}"#,
+            r#"{"refreshSeconds":1e30}"#,
+            r#"{"refreshSeconds":20000000000000000000}"#,
+        ] {
+            let settings = Settings::decode(Some(json));
+            assert_eq!(
+                (settings.decimals, settings.refresh_seconds),
+                (defaults.decimals, defaults.refresh_seconds),
+                "{json}"
+            );
+        }
+    }
+
+    /// Swift fails only the key whose number a Double cannot hold, overflow or underflow, and keeps the rest.
+    #[test]
+    fn a_number_out_of_double_range_falls_back_for_that_key_only() {
+        let defaults = Settings::default();
+        let settings = Settings::decode(Some(r#"{"opacity":1e400,"fontSize":30}"#));
+        assert_eq!(
+            (settings.opacity, settings.font_size),
+            (defaults.opacity, 30.0)
+        );
+        let settings = Settings::decode(Some(r#"{"fontSize":1e-400,"opacity":0.2}"#));
+        assert_eq!(
+            (settings.font_size, settings.opacity),
+            (defaults.font_size, 0.2)
+        );
+        let settings = Settings::decode(Some(
+            r#"{"textColor":{"red":-1e400,"green":0,"blue":0,"alpha":1},
+                "position":{"x":1e400,"y":5},"refreshSeconds":1e400,"locked":true}"#,
+        ));
+        assert_eq!(settings.text_color, defaults.text_color);
+        assert_eq!(settings.position, None);
+        assert_eq!(settings.refresh_seconds, defaults.refresh_seconds);
+        assert!(settings.locked);
+        assert_eq!(
+            Settings::decode(Some(r#"{"opacity":0.000e-400}"#)).opacity,
+            0.0,
+            "a zero is not an underflow"
+        );
+    }
+
     #[test]
     fn out_of_range_values_are_clamped() {
         let settings = Settings::decode(Some(
