@@ -16,3 +16,8 @@ warnings = "deny"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
+
+# The model checks in cargo test walk a few hundred thousand states; optimized, they finish in seconds. Debug
+# assertions and overflow checks stay on.
+[profile.test]
+opt-level = 3
