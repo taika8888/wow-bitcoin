@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["core", "paint"]
+members = ["core", "paint", "app"]
 
 [workspace.package]
 edition = "2024"
@@ -13,6 +13,29 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 fontdue = { version = "0.9", default-features = false, features = ["std"] }
+png = "0.17"
+# One feature list for both binaries, so a missing feature is a local clippy error and never a CI one.
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Networking_WinHttp",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_StationsAndDesktops",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+    "Win32_System_Time",
+    "Win32_UI_Accessibility",
+    "Win32_UI_Controls",
+    "Win32_UI_Controls_Dialogs",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

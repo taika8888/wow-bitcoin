@@ -82,6 +82,16 @@ impl MenuItem {
             MenuItem::Quit => "quit",
         }
     }
+
+    /// Shared by the drawn overlay menu and the tray menu.
+    pub fn label(self, settings: &Settings) -> &'static str {
+        match self {
+            MenuItem::Settings => "Settings\u{2026}",
+            MenuItem::Lock if settings.locked => "Unlock Position",
+            MenuItem::Lock => "Lock Position",
+            MenuItem::Quit => "Quit BTC Ticker",
+        }
+    }
 }
 
 /// What is under the pointer when the button comes up, from `Frame::hit` over the same rects that were drawn.

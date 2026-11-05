@@ -218,6 +218,9 @@ impl<M: Measure> App<M> {
             OverlayMode::Collapsed => None,
         };
         let bars_drawn = frame.map_or(0, |f| f.bars_drawn);
+        let newest = expanded
+            .filter(|_| bars_drawn > 0)
+            .and_then(|t| self.charts.get(t).candles().last());
         Snapshot {
             seq: self.snapshot_seq,
             text: TickerDisplay::new(&status, &self.overlay.settings).text(),
@@ -237,10 +240,8 @@ impl<M: Measure> App<M> {
             timeframe: expanded.map(|t| t.spec().label.into()),
             chart: expanded.map(|t| self.charts.get(t).name().into()),
             candles: bars_drawn,
-            newest_candle: expanded
-                .filter(|_| bars_drawn > 0)
-                .and_then(|t| self.charts.get(t).candles().last())
-                .map(|c| c.time.0),
+            newest_candle: newest.map(|c| c.time.0),
+            last_close: newest.map(|c| c.close),
             targets: frame
                 .map(|f| f.targets())
                 .unwrap_or_default()
@@ -457,7 +458,7 @@ impl<M: Measure> App<M> {
         let menu_style = TextStyle { px: 13.0 * scale };
         let mut menu = Vec::new();
         if self.overlay.menu_open {
-            let labels = MenuItem::ALL.map(|item| menu_label(item, settings));
+            let labels = MenuItem::ALL.map(|item| item.label(settings));
             let row = Size {
                 width: labels
                     .iter()
@@ -583,7 +584,7 @@ impl<M: Measure> App<M> {
                         x: rect.x + px(12.0),
                         y: rect.y + px(5.0),
                     },
-                    text: menu_label(*item, settings).into(),
+                    text: item.label(settings).into(),
                     style: menu_style,
                     color: WHITE,
                 });
@@ -778,15 +779,6 @@ fn tone_color(tone: Tone, settings: &Settings) -> Rgba {
         Tone::Neutral => settings.text_color,
         Tone::Up => settings.up_color,
         Tone::Down => settings.down_color,
-    }
-}
-
-fn menu_label(item: MenuItem, settings: &Settings) -> &'static str {
-    match item {
-        MenuItem::Settings => "Settings\u{2026}",
-        MenuItem::Lock if settings.locked => "Unlock Position",
-        MenuItem::Lock => "Lock Position",
-        MenuItem::Quit => "Quit BTC Ticker",
     }
 }
 

@@ -1,0 +1,17 @@
+//! BTC Ticker for Windows. All behavior is in `ticker-core`; this binary is the Win32 shell around one `App`.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
+#[cfg(windows)]
+mod win;
+
+fn main() {
+    #[cfg(windows)]
+    std::process::exit(win::run());
+    #[cfg(not(windows))]
+    {
+        eprintln!(
+            "btc-ticker is a Windows app. On this machine run windows/scripts/check.sh, which lints it for Windows."
+        );
+        std::process::exit(2);
+    }
+}

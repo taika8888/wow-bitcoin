@@ -7,6 +7,12 @@ use std::collections::BTreeMap;
 /// press and counts any other value as a foreign press.
 pub const SYNTHETIC_INPUT_TAG: usize = 0xB7C7_1C4E;
 
+/// Under HKEY_CURRENT_USER. The value holds the same JSON blob macOS keeps in its defaults domain under that name.
+pub const SETTINGS_KEY: &str = "Software\\BTCTicker";
+pub const SETTINGS_VALUE: &str = "btcTickerSettings";
+/// Used instead of `SETTINGS_KEY` when `BTCTICKER_SETTINGS` seeds a run, so a test never touches real settings.
+pub const SEEDED_SETTINGS_KEY: &str = "Software\\BTCTicker\\e2e";
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SnapshotFrame {
     pub x: f64,
@@ -39,6 +45,8 @@ pub struct Snapshot {
     pub candles: usize,
     /// Open time of the newest candle drawn, so the harness can tell a live series from a stale one.
     pub newest_candle: Option<f64>,
+    /// Close of that candle, so the harness can compare the chart with its own Kraken fetch.
+    pub last_close: Option<f64>,
     /// Click targets in screen px: "ticker", each timeframe label while expanded, "menu:<item>" while open.
     pub targets: BTreeMap<String, SnapshotFrame>,
     /// WM_ACTIVATE (WA_ACTIVE or WA_CLICKACTIVE) received by the overlay. Clicking it must never raise it.

@@ -321,12 +321,14 @@ mod chart {
             (snapshot.chart.as_deref(), snapshot.candles),
             (Some("loaded"), 96)
         );
-        let newest = kraken::parse_candles(OHLC_15, Timeframe::M15)
+        let newest = *kraken::parse_candles(OHLC_15, Timeframe::M15)
             .unwrap()
             .last()
-            .unwrap()
-            .time;
-        assert_eq!(snapshot.newest_candle, Some(newest.0));
+            .unwrap();
+        assert_eq!(
+            (snapshot.newest_candle, snapshot.last_close),
+            (Some(newest.time.0), Some(newest.close))
+        );
         let labels = texts(&driver.frame);
         assert!(
             labels.iter().any(|t| t.starts_with('$')),

@@ -28,4 +28,6 @@ pub use overlay::{
     DragPhase, Frontmost, MenuItem, OverlayEvent, OverlayMode, OverlayState, PressTarget, reduce,
 };
 pub use settings::{FORM, Field, FieldKind, Rgba, ScreenPoint, Settings};
-pub use snapshot::{SYNTHETIC_INPUT_TAG, Snapshot, SnapshotFrame};
+pub use snapshot::{
+    SEEDED_SETTINGS_KEY, SETTINGS_KEY, SETTINGS_VALUE, SYNTHETIC_INPUT_TAG, Snapshot, SnapshotFrame,
+};

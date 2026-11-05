@@ -1,0 +1,16 @@
+[package]
+name = "btc-ticker"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "BTC Ticker for Windows: the Win32 shell around one ticker-core App."
+
+[dependencies]
+ticker-core.workspace = true
+ticker-paint.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
+[lints]
+workspace = true
