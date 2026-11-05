@@ -1,6 +1,8 @@
 //! What the check sees and does on the real desktop: windows, z-order, foreground, real mouse input and screenshots.
 
+use std::cell::OnceCell;
 use std::path::Path;
+use std::rc::Rc;
 use std::time::Duration;
 
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT, WPARAM};
@@ -212,16 +214,18 @@ pub fn cursor() -> POINT {
     point
 }
 
-/// Real mouse input through `SendInput`, every event tagged so the app can tell it from a person's. It puts the
-/// cursor back where it found it when dropped.
+/// Real mouse input through `SendInput`, every event tagged so the app can tell it from a person's. Once the cursor
+/// lands somewhere it did not send it, it records why in `disturbance` and sends nothing more. Dropped, it puts the
+/// cursor back where it found it, unless someone else has the mouse by then.
 pub struct Mouse {
     tag: usize,
     home: POINT,
+    disturbance: Rc<OnceCell<String>>,
 }
 
 impl Mouse {
-    pub fn new(tag: usize) -> Mouse {
-        Mouse { tag, home: cursor() }
+    pub fn new(tag: usize, disturbance: Rc<OnceCell<String>>) -> Mouse {
+        Mouse { tag, home: cursor(), disturbance }
     }
 
     /// Clicks `point` only if one of `allowed` is the window there.
@@ -244,6 +248,7 @@ impl Mouse {
         self.guard(from, allowed)?;
         self.move_to(from)?;
         self.send(MOUSEEVENTF_LEFTDOWN, 0, 0, 0)?;
+        let held = Held(self);
         std::thread::sleep(Duration::from_millis(60));
         const STEPS: i32 = 12;
         for step in 1..=STEPS {
@@ -251,7 +256,7 @@ impl Mouse {
             self.move_to(at)?;
             std::thread::sleep(Duration::from_millis(15));
         }
-        self.send(MOUSEEVENTF_LEFTUP, 0, 0, 0)?;
+        drop(held);
         std::thread::sleep(Duration::from_millis(300));
         Ok(())
     }
@@ -300,15 +305,24 @@ impl Mouse {
         std::thread::sleep(Duration::from_millis(30));
         let landed = cursor();
         if (landed.x, landed.y) != (point.x, point.y) {
-            return Err(format!(
+            let seen = format!(
                 "the cursor is at ({}, {}), not ({}, {}): someone may be moving the mouse",
                 landed.x, landed.y, point.x, point.y
-            ));
+            );
+            let _ = self.disturbance.set(seen.clone());
+            return Err(seen);
         }
         Ok(())
     }
 
     fn send(&self, flags: MOUSE_EVENT_FLAGS, dx: i32, dy: i32, data: i32) -> Result<(), String> {
+        if let Some(seen) = self.disturbance.get() {
+            return Err(format!("sent no input, since {seen}"));
+        }
+        self.inject(flags, dx, dy, data)
+    }
+
+    fn inject(&self, flags: MOUSE_EVENT_FLAGS, dx: i32, dy: i32, data: i32) -> Result<(), String> {
         let input = INPUT {
             r#type: INPUT_MOUSE,
             Anonymous: INPUT_0 {
@@ -321,10 +335,22 @@ impl Mouse {
     }
 }
 
+/// The left button the drag pressed. Dropping it releases the button on every way out of the drag, a disturbance
+/// included, so the button is never left held down.
+struct Held<'a>(&'a Mouse);
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        let _ = self.0.inject(MOUSEEVENTF_LEFTUP, 0, 0, 0);
+    }
+}
+
 impl Drop for Mouse {
     fn drop(&mut self) {
-        // SAFETY: plain call.
-        let _ = unsafe { SetCursorPos(self.home.x, self.home.y) };
+        if self.disturbance.get().is_none() {
+            // SAFETY: plain call.
+            let _ = unsafe { SetCursorPos(self.home.x, self.home.y) };
+        }
     }
 }
 
