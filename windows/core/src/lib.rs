@@ -3,6 +3,7 @@
 mod display;
 mod feed;
 mod market;
+mod overlay;
 mod settings;
 
 pub mod kraken;
@@ -11,4 +12,7 @@ pub use display::{Segment, TickerDisplay, Tone, format_change, format_price};
 pub use feed::{FeedSchedule, FeedStatus};
 pub use kraken::KrakenError;
 pub use market::{Candle, Quote, Time, Timeframe, TimeframeSpec};
+pub use overlay::{
+    DragPhase, Frontmost, MenuItem, OverlayEvent, OverlayMode, OverlayState, PressTarget, reduce,
+};
 pub use settings::{FORM, Field, FieldKind, Rgba, ScreenPoint, Settings};
