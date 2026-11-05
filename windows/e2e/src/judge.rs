@@ -49,6 +49,31 @@ pub fn same_rect(a: &Rect, b: &Rect) -> bool {
     .all(|(p, q)| (p - q).abs() < 1.0)
 }
 
+/// Whether a window's press counter rose between two reads; None when either read failed. A count that could not be
+/// read is never taken for "no press".
+pub fn pressed(before: Option<isize>, after: Option<isize>) -> Option<bool> {
+    Some(after? > before?)
+}
+
+/// After a click meant for the overlay: Err when it reached the stand-in, or when the stand-in's press count could
+/// not be read, so a pass-through cannot be ruled out.
+pub fn click_kept_off_standin(
+    before: Option<isize>,
+    after: Option<isize>,
+    at: (i32, i32),
+) -> Result<(), Verdict> {
+    match pressed(before, after) {
+        Some(false) => Ok(()),
+        Some(true) => Err(Verdict::Fail(format!(
+            "the click at {at:?} passed through to the stand-in"
+        ))),
+        None => Err(Verdict::Inconclusive(format!(
+            "the stand-in's press count could not be read around the click at {at:?} (before {before:?}, after \
+             {after:?}), so a pass-through cannot be ruled out"
+        ))),
+    }
+}
+
 pub struct DesktopFacts {
     /// None when ProcessIdToSessionId failed.
     pub session_id: Option<u32>,
@@ -58,8 +83,8 @@ pub struct DesktopFacts {
     /// Points where SendInput's move did not land GetCursorPos exactly, as "target->actual".
     pub cursor_misses: Vec<String>,
     pub cursor_tries: usize,
-    /// A tagged SendInput click on the stand-in raised its press counter.
-    pub click_reached_standin: bool,
+    /// A tagged SendInput click on the stand-in raised its press counter; None when the counter could not be read.
+    pub click_reached_standin: Option<bool>,
     /// What BitBlt read at a stand-in pixel, against the fill it paints.
     pub capture: Option<[u8; 3]>,
     pub standin_fill: [u8; 3],
@@ -91,8 +116,10 @@ pub fn desktop(f: &DesktopFacts) -> Verdict {
             f.cursor_misses.join(" ")
         ));
     }
-    if !f.click_reached_standin {
-        missing.push("a SendInput click on the stand-in never arrived".into());
+    match f.click_reached_standin {
+        Some(true) => {}
+        Some(false) => missing.push("a SendInput click on the stand-in never arrived".into()),
+        None => missing.push("the stand-in's press count could not be read".into()),
     }
     if f.capture != Some(f.standin_fill) {
         missing.push(format!(
@@ -363,16 +390,26 @@ pub fn above(top_down: &[u64], overlay: u64, standin: u64) -> Verdict {
     }
 }
 
-/// The stand-in's re-raise must first be seen to win, or recovery was never exercised.
-pub fn topmost_recovers(seen_below: bool, recovered_ms: Option<u64>, bound_ms: u64) -> Verdict {
+/// The stand-in's re-raise must first be seen to win, or recovery was never exercised; and the foreground must not
+/// change meanwhile, or the overlay may have come back through an activation rather than its own re-assert.
+pub fn topmost_recovers(
+    seen_below: bool,
+    recovered_ms: Option<u64>,
+    bound_ms: u64,
+    foreground_changes: usize,
+) -> Verdict {
     match (seen_below, recovered_ms) {
         (false, _) => Verdict::Inconclusive(
             "the stand-in's SetWindowPos(HWND_TOPMOST) never put it above the overlay, so recovery was not exercised"
                 .into(),
         ),
+        _ if foreground_changes > 0 => Verdict::Inconclusive(format!(
+            "the foreground changed {foreground_changes} times between the stand-in's re-raise and the overlay's \
+             return, so the recovery cannot be told from an activation"
+        )),
         (true, Some(ms)) if ms <= bound_ms => Verdict::Pass(format!(
-            "the stand-in re-raised itself above the overlay with no foreground change; the overlay was back on \
-             top {ms} ms later (bound {bound_ms} ms)"
+            "the stand-in re-raised itself above the overlay and the watcher saw no foreground change; the \
+             overlay was back on top {ms} ms later (bound {bound_ms} ms)"
         )),
         (true, ms) => Verdict::Fail(format!(
             "the stand-in re-raised itself above the overlay and the overlay was not back on top within \
@@ -415,15 +452,20 @@ pub struct FocusFacts<'a> {
     pub standin: u64,
     pub app_pid: u32,
     pub excused: &'a [Span],
+    /// WM_ACTIVATE received by any app window but Settings.
     pub activations: u32,
+    /// Ok when the right-click menu was opened, Lock clicked and restored, and the menu dismissed by moving the
+    /// pointer away, all while watching; else the verdict of the step that failed.
+    pub menu: Result<(), Verdict>,
     /// The deliberate steal by the harness's helper window, which proves the watcher can see one.
     pub steal_seen: bool,
     /// What happened while watching, for the detail.
     pub covered: &'a str,
 }
 
-/// Pass only if the watcher is shown to see a steal, the app never owned the foreground, the overlay never got
-/// WM_ACTIVATE, and every stretch held by another window lies inside one excused span.
+/// Pass only if the watcher is shown to see a steal, the app never owned the foreground, no app window but Settings
+/// got WM_ACTIVATE, every stretch held by another window lies inside one excused span, and the drawn menu was
+/// exercised while watching.
 pub fn focus_kept(f: &FocusFacts) -> Verdict {
     if !f.steal_seen {
         return Verdict::Inconclusive(
@@ -439,7 +481,7 @@ pub fn focus_kept(f: &FocusFacts) -> Verdict {
     }
     if f.activations > 0 {
         return Verdict::Fail(format!(
-            "the overlay received WM_ACTIVATE {} times",
+            "the app's windows received WM_ACTIVATE {} times",
             f.activations
         ));
     }
@@ -462,9 +504,21 @@ pub fn focus_kept(f: &FocusFacts) -> Verdict {
             sample.hwnd, sample.pid, sample.at_ms
         ));
     }
+    match &f.menu {
+        Ok(()) => {}
+        Err(Verdict::Fail(why)) => {
+            return Verdict::Fail(format!("the right-click menu failed while watching: {why}"));
+        }
+        Err(other) => {
+            return Verdict::Inconclusive(format!(
+                "the right-click menu was not exercised while watching, so the guarantee does not cover it: {}",
+                other.detail()
+            ));
+        }
+    }
     Verdict::Pass(format!(
         "the stand-in held the foreground across {}; {} foreground changes, all inside the harness's deliberate \
-         switches; 0 activations; the watcher saw the helper's steal",
+         switches; 0 activations of any app window but Settings; the watcher saw the helper's steal",
         f.covered,
         f.timeline.len().saturating_sub(1)
     ))
@@ -518,8 +572,12 @@ pub fn wow_gate(f: &GateFacts) -> Verdict {
 pub struct OpaqueFacts {
     /// WindowFromPoint on the harness's clear window's opaque strip found that window.
     pub control_window_present: bool,
-    /// A click on its alpha-0 pixels reached the stand-in beneath and not the clear window.
-    pub control_passed_through: bool,
+    /// A click on its alpha-0 pixels reached the stand-in beneath and not the clear window; None when a press count
+    /// could not be read.
+    pub control_passed_through: Option<bool>,
+    /// What WindowFromPoint found over those alpha-0 pixels when it was not the stand-in beneath. The grid is graded
+    /// with WindowFromPoint, which proves something only if it skips alpha-0 pixels the way clicks do.
+    pub hole_found_instead: Option<String>,
     /// Grid points over the overlay at opacity 0 where WindowFromPoint found another window.
     pub misses: Vec<String>,
     pub grid_points: usize,
@@ -529,11 +587,28 @@ pub struct OpaqueFacts {
 }
 
 pub fn opaque_to_clicks(f: &OpaqueFacts) -> Verdict {
-    if !f.control_window_present || !f.control_passed_through {
+    let mut control = Vec::new();
+    if !f.control_window_present {
+        control
+            .push("WindowFromPoint on the clear window's opaque strip did not find it".to_string());
+    }
+    match f.control_passed_through {
+        Some(true) => {}
+        Some(false) => {
+            control.push("a click on its alpha-0 pixels did not reach the stand-in alone".into())
+        }
+        None => control.push("a press count could not be read around the click on it".into()),
+    }
+    if let Some(found) = &f.hole_found_instead {
+        control.push(format!(
+            "WindowFromPoint over its alpha-0 pixels found {found}, not the stand-in beneath, so it cannot grade \
+             the grid"
+        ));
+    }
+    if !control.is_empty() {
         return Verdict::Inconclusive(format!(
-            "the negative control did not show alpha-0 pixels passing clicks through (window present {}, \
-             passed through {}), so a pass would prove nothing",
-            f.control_window_present, f.control_passed_through
+            "the negative control on the harness's alpha-0 window failed, so a pass would prove nothing: {}",
+            control.join("; ")
         ));
     }
     let mut wrong = Vec::new();
@@ -554,9 +629,10 @@ pub fn opaque_to_clicks(f: &OpaqueFacts) -> Verdict {
     Verdict::of(
         wrong.is_empty(),
         format!(
-            "a click on the harness's alpha-0 window fell through to the stand-in, while at background opacity 0 all \
-             {} grid points over the collapsed and expanded overlay hit it and a click at its corner toggled the \
-             chart without reaching the stand-in",
+            "on the harness's alpha-0 window a click fell through to the stand-in and WindowFromPoint reported the \
+             stand-in too, while at background opacity 0 WindowFromPoint found the overlay at all {} grid points \
+             over the collapsed and expanded overlay and a click at its corner toggled the chart without reaching \
+             the stand-in",
             f.grid_points
         ),
         wrong.join("; "),
@@ -573,6 +649,9 @@ pub struct SettingsWindowFacts {
     pub expected_trackbars: usize,
     /// Clicking the "Show BTC label" checkbox changed the stored settings and the ticker text.
     pub toggle_applied: bool,
+    /// Err with what went wrong unless: a click on a color swatch opened the color dialog, a registry edit made
+    /// while it was open reached the ticker, and OK in the dialog kept that edit.
+    pub color_dialog: Result<(), String>,
     /// The window still held the foreground just before WM_CLOSE, so handing it back is exercised.
     pub kept_foreground: bool,
     pub closed: bool,
@@ -617,13 +696,16 @@ pub fn settings_window(f: &SettingsWindowFacts) -> Verdict {
             "clicking Show BTC label did not change the stored settings and the ticker".into(),
         );
     }
+    if let Err(why) = &f.color_dialog {
+        wrong.push(why.clone());
+    }
     if !f.kept_foreground {
         wrong.push(
             "it lost the foreground before closing, so handing it back was not exercised".into(),
         );
     }
     if !f.closed {
-        wrong.push("WM_CLOSE did not close it".into());
+        wrong.push("a posted WM_CLOSE did not close it".into());
     }
     if f.kept_foreground && !f.foreground_returned {
         wrong.push("closing it did not hand the foreground back to the stand-in".into());
@@ -633,9 +715,30 @@ pub fn settings_window(f: &SettingsWindowFacts) -> Verdict {
         format!(
             "opened from the overlay menu on top of the topmost stand-in and took the foreground; {} sliders for \
              FORM's slider and color rows; clicking Show BTC label changed the stored settings and the ticker; \
-             WM_CLOSE closed it and the stand-in got the foreground back",
+             a registry edit made while the color dialog was open survived its OK; a posted WM_CLOSE closed it and \
+             the stand-in got the foreground back",
             f.trackbars
         ),
         wrong.join("; "),
     )
+}
+
+/// `exit` is the process's exit code once it ended, None while it still runs. Quit must end it cleanly.
+pub fn quit(exit: Option<Option<i32>>, after_ms: u64) -> Verdict {
+    match exit {
+        Some(Some(0)) => Verdict::Pass(format!(
+            "Quit in the overlay menu ended the process with exit code 0 in {after_ms} ms"
+        )),
+        Some(Some(code)) => Verdict::Fail(format!(
+            "the process ended {after_ms} ms after Quit with exit code {code:#010x}, not 0, so it failed on the \
+             way out",
+            code = code as u32
+        )),
+        Some(None) => Verdict::Fail(format!(
+            "the process ended {after_ms} ms after Quit with no exit code"
+        )),
+        None => Verdict::Fail(format!(
+            "the process was still running {after_ms} ms after Quit"
+        )),
+    }
 }

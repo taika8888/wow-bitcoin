@@ -72,9 +72,21 @@ mod report {
             Check::Timeframe1m,
             Check::Collapse,
             Check::OpaqueToClicks,
+            Check::SettingsWindow,
+            Check::Quit,
         ] {
-            assert!(check.name().contains("SendInput"), "{}", check.name());
+            assert!(
+                check.name().contains("SendInput, synthesized OS input"),
+                "{}",
+                check.name()
+            );
         }
+        assert!(
+            Check::SettingsWindow
+                .name()
+                .contains("posted WM_CLOSE closes Settings"),
+            "Settings is closed by a posted message, not by input"
+        );
     }
 }
 
@@ -419,15 +431,25 @@ mod window {
     #[test]
     fn topmost_recovery_must_first_be_lost() {
         assert_eq!(
-            judge::topmost_recovers(false, Some(10), 3000).status(),
+            judge::topmost_recovers(false, Some(10), 3000, 0).status(),
             "INCONCLUSIVE"
         );
-        assert!(judge::topmost_recovers(true, Some(1900), 3000).passed());
+        assert!(judge::topmost_recovers(true, Some(1900), 3000, 0).passed());
         assert_eq!(
-            judge::topmost_recovers(true, Some(3500), 3000).status(),
+            judge::topmost_recovers(true, Some(3500), 3000, 0).status(),
             "FAIL"
         );
-        assert_eq!(judge::topmost_recovers(true, None, 3000).status(), "FAIL");
+        assert_eq!(
+            judge::topmost_recovers(true, None, 3000, 0).status(),
+            "FAIL"
+        );
+    }
+
+    #[test]
+    fn topmost_recovery_with_a_foreground_change_proves_nothing() {
+        let verdict = judge::topmost_recovers(true, Some(1900), 3000, 1);
+        assert_eq!(verdict.status(), "INCONCLUSIVE");
+        assert!(verdict.detail().contains("foreground changed"));
     }
 
     #[test]
@@ -488,7 +510,7 @@ mod window {
             screen: (1024, 768),
             cursor_misses: Vec::new(),
             cursor_tries: 5,
-            click_reached_standin: true,
+            click_reached_standin: Some(true),
             capture: Some(STANDIN_FILL),
             standin_fill: STANDIN_FILL,
         };
@@ -507,7 +529,11 @@ mod window {
                 ..clone(&good)
             },
             DesktopFacts {
-                click_reached_standin: false,
+                click_reached_standin: Some(false),
+                ..clone(&good)
+            },
+            DesktopFacts {
+                click_reached_standin: None,
                 ..clone(&good)
             },
             DesktopFacts {
@@ -550,6 +576,16 @@ mod focus {
         activations: u32,
         steal_seen: bool,
     ) -> Verdict {
+        with_menu(timeline, excused, activations, steal_seen, Ok(()))
+    }
+
+    fn with_menu(
+        timeline: &[Sample],
+        excused: &[Span],
+        activations: u32,
+        steal_seen: bool,
+        menu: Result<(), Verdict>,
+    ) -> Verdict {
         judge::focus_kept(&FocusFacts {
             timeline,
             ended_ms: 10_000,
@@ -557,6 +593,7 @@ mod focus {
             app_pid: APP_PID,
             excused,
             activations,
+            menu,
             steal_seen,
             covered: "the run",
         })
@@ -621,6 +658,63 @@ mod focus {
     }
 
     #[test]
+    fn the_guarantee_must_cover_the_drawn_menu() {
+        let held = [sample(0, GAME, 1)];
+        let failed = with_menu(
+            &held,
+            &[GATE],
+            0,
+            true,
+            Err(Verdict::Fail("the menu never opened".into())),
+        );
+        assert_eq!(failed.status(), "FAIL");
+        let skipped = with_menu(
+            &held,
+            &[GATE],
+            0,
+            true,
+            Err(Verdict::Inconclusive("input did not arrive".into())),
+        );
+        assert_eq!(skipped.status(), "INCONCLUSIVE");
+        let stray = [
+            sample(0, GAME, 1),
+            sample(5_000, HELPER, 2),
+            sample(5_050, GAME, 1),
+        ];
+        assert_eq!(
+            with_menu(
+                &stray,
+                &[GATE],
+                0,
+                true,
+                Err(Verdict::Inconclusive("input did not arrive".into()))
+            )
+            .status(),
+            "FAIL",
+            "a steal outside a switch fails whatever happened to the menu"
+        );
+    }
+
+    #[test]
+    fn a_press_count_that_cannot_be_read_is_never_no_press() {
+        assert_eq!(judge::pressed(Some(3), Some(3)), Some(false));
+        assert_eq!(judge::pressed(Some(3), Some(4)), Some(true));
+        for (before, after) in [(None, Some(3)), (Some(3), None), (None, None)] {
+            assert_eq!(judge::pressed(before, after), None);
+            let verdict = judge::click_kept_off_standin(before, after, (5, 5)).unwrap_err();
+            assert_eq!(verdict.status(), "INCONCLUSIVE");
+            assert!(verdict.detail().contains("could not be read"));
+        }
+        assert!(judge::click_kept_off_standin(Some(3), Some(3), (5, 5)).is_ok());
+        assert_eq!(
+            judge::click_kept_off_standin(Some(3), Some(4), (5, 5))
+                .unwrap_err()
+                .status(),
+            "FAIL"
+        );
+    }
+
+    #[test]
     fn foreign_presses_make_the_run_inconclusive() {
         assert!(judge::undisturbed(0, 12).passed());
         assert_eq!(judge::undisturbed(1, 12).status(), "INCONCLUSIVE");
@@ -660,7 +754,8 @@ mod scenarios {
     fn opaque() -> OpaqueFacts {
         OpaqueFacts {
             control_window_present: true,
-            control_passed_through: true,
+            control_passed_through: Some(true),
+            hole_found_instead: None,
             misses: Vec::new(),
             grid_points: 70,
             corner_click_toggled: true,
@@ -671,13 +766,34 @@ mod scenarios {
     #[test]
     fn opaque_needs_the_negative_control_first() {
         assert!(judge::opaque_to_clicks(&opaque()).passed());
-        let no_control = OpaqueFacts {
-            control_passed_through: false,
+        for no_control in [
+            OpaqueFacts {
+                control_passed_through: Some(false),
+                ..opaque()
+            },
+            OpaqueFacts {
+                control_passed_through: None,
+                ..opaque()
+            },
+            OpaqueFacts {
+                hole_found_instead: Some("BTCTickerE2EClear of pid 7".into()),
+                ..opaque()
+            },
+        ] {
+            assert_eq!(
+                judge::opaque_to_clicks(&no_control).status(),
+                "INCONCLUSIVE"
+            );
+        }
+        let blind = OpaqueFacts {
+            hole_found_instead: Some("BTCTickerE2EClear of pid 7".into()),
             ..opaque()
         };
-        assert_eq!(
-            judge::opaque_to_clicks(&no_control).status(),
-            "INCONCLUSIVE"
+        assert!(
+            judge::opaque_to_clicks(&blind)
+                .detail()
+                .contains("WindowFromPoint over its alpha-0 pixels found BTCTickerE2EClear"),
+            "says the grading method is unproven"
         );
         let leaky = OpaqueFacts {
             misses: vec!["300,40".into()],
@@ -701,6 +817,7 @@ mod scenarios {
             trackbars: 7,
             expected_trackbars: 7,
             toggle_applied: true,
+            color_dialog: Ok(()),
             kept_foreground: true,
             closed: true,
             foreground_returned: true,
@@ -726,5 +843,27 @@ mod scenarios {
             ..good()
         };
         assert_eq!(judge::settings_window(&missing_alpha).status(), "FAIL");
+        let reverted = SettingsWindowFacts {
+            color_dialog: Err("OK in the color dialog undid a registry edit".into()),
+            ..good()
+        };
+        let verdict = judge::settings_window(&reverted);
+        assert_eq!(verdict.status(), "FAIL");
+        assert!(verdict.detail().contains("undid a registry edit"));
+    }
+
+    #[test]
+    fn quit_must_exit_cleanly() {
+        assert!(judge::quit(Some(Some(0)), 120).passed());
+        let crashed = judge::quit(Some(Some(0xC000_0005_u32 as i32)), 120);
+        assert_eq!(crashed.status(), "FAIL");
+        assert!(
+            crashed.detail().contains("0xc0000005"),
+            "{}",
+            crashed.detail()
+        );
+        assert_eq!(judge::quit(Some(Some(1)), 120).status(), "FAIL");
+        assert_eq!(judge::quit(Some(None), 120).status(), "FAIL");
+        assert_eq!(judge::quit(None, 10_000).status(), "FAIL");
     }
 }

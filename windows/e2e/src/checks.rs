@@ -39,8 +39,8 @@ checks! {
     OpaqueToClicks => "opaque-to-clicks (SendInput, synthesized OS input)",
     FocusKept => "focus-kept",
     Undisturbed => "undisturbed",
-    SettingsWindow => "settings-window (SendInput, synthesized OS input)",
-    Quit => "quit (SendInput, overlay menu)",
+    SettingsWindow => "settings-window (SendInput, synthesized OS input; posted IDOK closes the color dialog, posted WM_CLOSE closes Settings)",
+    Quit => "quit (SendInput, synthesized OS input, overlay menu)",
 }
 
 #[derive(Clone, Debug, PartialEq)]

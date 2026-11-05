@@ -22,7 +22,8 @@ use windows::Win32::System::JobObjects::{
     SetInformationJobObject,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, PostMessageW, SetForegroundWindow, WM_CLOSE,
+    BS_OWNERDRAW, BS_TYPEMASK, FindWindowW, IDOK, PostMessageW, SetForegroundWindow, WM_CLOSE,
+    WM_COMMAND,
 };
 use windows::core::{PCWSTR, w};
 
@@ -213,11 +214,7 @@ impl Harness<'_> {
             .map_err(|e| Verdict::Inconclusive(format!("input did not arrive: {e}")))?;
         self.clicks += 1;
         let reached = self.wait(seconds, done);
-        if self.game.presses() != before {
-            return Err(Verdict::Fail(format!(
-                "the click at {at:?} passed through to the stand-in"
-            )));
-        }
+        judge::click_kept_off_standin(before, self.game.presses(), at)?;
         reached.ok_or_else(|| {
             Verdict::Fail(format!(
                 "nothing changed {seconds} s after the click at {at:?}; {}",
@@ -284,13 +281,14 @@ impl Harness<'_> {
         self.launch(app)?;
         self.live_quote();
         self.window_checks();
-        self.topmost_recovers();
+        self.topmost_recovers(&watcher);
         self.settings_live();
         self.wow_gate(&watcher);
         self.clamped();
         self.chart_checks()?;
         self.opaque_to_clicks();
-        self.focus_kept(&watcher);
+        let menu = self.exercise_menu();
+        self.focus_kept(&watcher, menu);
         drop(watcher);
         self.undisturbed();
         self.settings_window();
@@ -312,12 +310,14 @@ impl Harness<'_> {
             .collect();
         let before = self.game.presses();
         let (x, y) = self.standin_point();
-        let clicked = os::click(x, y, Button::Left).is_ok();
-        let click_reached_standin = clicked
-            && wait_until(2.0, || {
-                (self.game.presses().zip(before).is_some_and(|(a, b)| a > b)).then_some(())
+        let click_reached_standin = match os::click(x, y, Button::Left) {
+            Err(_) => Some(false),
+            Ok(()) => wait_until(2.0, || match judge::pressed(before, self.game.presses()) {
+                Some(false) => None,
+                read => Some(read),
             })
-            .is_some();
+            .unwrap_or(Some(false)),
+        };
         let capture = os::capture(&Rect {
             x: f64::from(x),
             y: f64::from(y),
@@ -477,7 +477,8 @@ impl Harness<'_> {
         judge::above(&order, os::id(self.overlay), os::id(self.game.hwnd)).passed()
     }
 
-    fn topmost_recovers(&mut self) {
+    fn topmost_recovers(&mut self, watcher: &watch::Watcher) {
+        let from_ms = os::ms();
         let mut seen_below = false;
         for _ in 0..3 {
             if self.game.raise() && !self.overlay_above_game() {
@@ -491,7 +492,14 @@ impl Harness<'_> {
             .then(|| wait_until(5.0, || self.overlay_above_game().then_some(())))
             .flatten()
             .map(|_| raised_at.elapsed().as_millis() as u64);
-        let verdict = judge::topmost_recovers(seen_below, recovered, TOPMOST_BOUND_MS);
+        let to_ms = os::ms();
+        let foreground_changes = watcher
+            .timeline()
+            .iter()
+            .filter(|sample| (from_ms..=to_ms).contains(&sample.at_ms))
+            .count();
+        let verdict =
+            judge::topmost_recovers(seen_below, recovered, TOPMOST_BOUND_MS, foreground_changes);
         self.record(Check::TopmostRecovers, verdict);
     }
 
@@ -730,18 +738,29 @@ impl Harness<'_> {
         let (strip, hole) = Role::clear_points(self.screen);
         self.clear.raise();
         let control_window_present = os::window_at(strip.0, strip.1) == self.clear.hwnd;
+        let under_hole = os::window_at(hole.0, hole.1);
+        let hole_found_instead = (under_hole != self.game.hwnd).then(|| {
+            format!(
+                "{} of pid {}",
+                os::class_of(under_hole),
+                os::pid_of(under_hole)
+            )
+        });
         let (game_before, clear_before) = (self.game.presses(), self.clear.presses());
-        let control_passed_through = os::click(hole.0, hole.1, Button::Left).is_ok()
-            && wait_until(2.0, || {
-                (self
-                    .game
-                    .presses()
-                    .zip(game_before)
-                    .is_some_and(|(a, b)| a > b))
-                .then_some(())
-            })
-            .is_some()
-            && self.clear.presses() == clear_before;
+        let control_passed_through = match os::click(hole.0, hole.1, Button::Left) {
+            Err(_) => Some(false),
+            Ok(()) => {
+                let game = wait_until(2.0, || {
+                    match judge::pressed(game_before, self.game.presses()) {
+                        Some(false) => None,
+                        read => Some(read),
+                    }
+                })
+                .unwrap_or(Some(false));
+                let clear = judge::pressed(clear_before, self.clear.presses());
+                game.zip(clear).map(|(game, clear)| game && !clear)
+            }
+        };
         wait_until(TOPMOST_BOUND_MS as f64 / 1000.0, || {
             self.overlay_above_game().then_some(())
         });
@@ -781,6 +800,7 @@ impl Harness<'_> {
         let verdict = judge::opaque_to_clicks(&judge::OpaqueFacts {
             control_window_present,
             control_passed_through,
+            hole_found_instead,
             misses,
             grid_points,
             corner_click_toggled,
@@ -810,11 +830,35 @@ impl Harness<'_> {
         tried
     }
 
-    fn focus_kept(&mut self, watcher: &watch::Watcher) {
+    /// While the watcher runs: open the drawn menu with a right click, choose Lock and choose it again to restore
+    /// the lock, then open it once more and close it by moving the pointer away.
+    fn exercise_menu(&mut self) -> Result<(), Verdict> {
+        let locked = self
+            .snapshot()
+            .map(|s| s.locked)
+            .ok_or_else(|| Verdict::Fail("no snapshot".into()))?;
+        for want in [!locked, locked] {
+            self.open_menu()?;
+            self.click_target("menu:lock", 3.0, move |s| !s.menu_open && s.locked == want)?;
+        }
+        self.open_menu()?;
+        let (x, y) = self.standin_point();
+        os::move_to(x, y)
+            .map_err(|e| Verdict::Inconclusive(format!("input did not arrive: {e}")))?;
+        self.wait(3.0, |s| !s.menu_open).map(|_| ()).ok_or_else(|| {
+            Verdict::Fail(format!(
+                "moving the pointer off the overlay did not close the menu; {}",
+                self.last()
+            ))
+        })
+    }
+
+    fn focus_kept(&mut self, watcher: &watch::Watcher, menu: Result<(), Verdict>) {
         let timeline = watcher.timeline();
         let activations = self.snapshot().map_or(u32::MAX, |s| s.activations);
         let covered = format!(
-            "launch, {} settings edits and {} clicks on the overlay",
+            "launch, {} settings edits and {} clicks on the overlay, among them the right-click menu opened three \
+             times, Lock chosen and restored, and the menu dismissed by moving the pointer away",
             self.edits, self.clicks
         );
         let verdict = judge::focus_kept(&judge::FocusFacts {
@@ -824,6 +868,7 @@ impl Harness<'_> {
             app_pid: self.app_pid(),
             excused: &self.excused,
             activations,
+            menu,
             steal_seen: watcher.saw(self.helper.hwnd),
             covered: &covered,
         });
@@ -871,6 +916,7 @@ impl Harness<'_> {
                 trackbars: 0,
                 expected_trackbars: judge::expected_trackbars(),
                 toggle_applied: false,
+                color_dialog: Err("not reached".into()),
                 kept_foreground: false,
                 closed: false,
                 foreground_returned: false,
@@ -911,7 +957,9 @@ impl Harness<'_> {
                     .is_some()
                 && os::read_settings().is_some_and(|s| s.contains(r#""showLabel":false"#))
         });
-        let kept_foreground = os::foreground() == window;
+        let color_dialog = self.color_dialog_keeps_outside_edit(&controls);
+        let kept_foreground =
+            wait_until(3.0, || (os::foreground() == window).then_some(())).is_some();
         // SAFETY: posts to a window of the app's; a stale handle fails harmlessly.
         let _ = unsafe { PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)) };
         let closed = wait_until(3.0, || (!os::visible(window)).then_some(())).is_some();
@@ -924,6 +972,7 @@ impl Harness<'_> {
             trackbars,
             expected_trackbars: judge::expected_trackbars(),
             toggle_applied,
+            color_dialog,
             kept_foreground,
             closed,
             foreground_returned,
@@ -932,6 +981,76 @@ impl Harness<'_> {
         if !foreground_returned {
             let _ = self.bring_standin_forward();
         }
+    }
+
+    /// Clicks the first color swatch, edits the registry while the modal color dialog is open, then posts IDOK to
+    /// it: the edit must survive the dialog's OK.
+    fn color_dialog_keeps_outside_edit(&mut self, controls: &[HWND]) -> Result<(), String> {
+        let swatch = controls
+            .iter()
+            .copied()
+            .find(|&h| {
+                os::class_of(h) == "Button"
+                    && os::style(h) & BS_TYPEMASK as u32 == BS_OWNERDRAW as u32
+            })
+            .ok_or("there is no owner-drawn color swatch")?;
+        let (x, y) = os::window_rect(swatch)
+            .map(|r| center(&r))
+            .ok_or("the color swatch has no rect")?;
+        os::click(x, y, Button::Left).map_err(|e| format!("input did not arrive: {e}"))?;
+        let pid = self.app_pid();
+        let dialog = wait_until(5.0, || {
+            os::top_level()
+                .into_iter()
+                .find(|&h| os::pid_of(h) == pid && os::class_of(h) == "#32770" && os::visible(h))
+        })
+        .ok_or("clicking the color swatch opened no color dialog")?;
+        let landed = self.edit_decimals_while_open();
+        // SAFETY: posts to the app's dialog; a stale handle fails harmlessly.
+        let _ =
+            unsafe { PostMessageW(Some(dialog), WM_COMMAND, WPARAM(IDOK.0 as usize), LPARAM(0)) };
+        if wait_until(3.0, || (!os::visible(dialog)).then_some(())).is_none() {
+            return Err("a posted IDOK did not close the color dialog".into());
+        }
+        let decimals = landed?;
+        let shows = move |s: &Snapshot| {
+            judge::parse_ticker(&s.text).is_some_and(|t| t.decimals as u64 == decimals)
+        };
+        if let Some(reverted) = self.wait(1.5, move |s| !shows(s)) {
+            return Err(format!(
+                "OK in the color dialog undid a registry edit made while it was open: the ticker went from \
+                 {decimals} decimals back to '{}'",
+                reverted.text
+            ));
+        }
+        let kept = format!(r#""decimals":{decimals}"#);
+        match os::read_settings() {
+            Some(after) if after.contains(&kept) => Ok(()),
+            after => Err(format!(
+                "OK in the color dialog overwrote a registry edit made while it was open: stored {after:?}"
+            )),
+        }
+    }
+
+    /// Steps the stored decimals by one and waits for the ticker to show them. Returns the new count.
+    fn edit_decimals_while_open(&mut self) -> Result<u64, String> {
+        let mut stored: Value = os::read_settings()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .ok_or("the stored settings are unreadable")?;
+        let decimals = (stored["decimals"].as_u64().unwrap_or(0) + 1) % 3;
+        stored["decimals"] = json!(decimals);
+        self.edit(&stored.to_string())?;
+        self.wait(5.0, |s| {
+            judge::parse_ticker(&s.text).is_some_and(|t| t.decimals as u64 == decimals)
+        })
+        .map(|_| decimals)
+        .ok_or_else(|| {
+            format!(
+                "a registry edit to {decimals} decimals made while the color dialog was open never reached the \
+                 ticker; {}",
+                self.last()
+            )
+        })
     }
 
     fn quit(&mut self) {
@@ -946,13 +1065,10 @@ impl Harness<'_> {
                     let app = self.app.as_mut()?;
                     app.child.try_wait().ok().flatten()
                 });
-                match exited {
-                    Some(status) => Verdict::Pass(format!(
-                        "Quit in the overlay menu ended the process in {} ms ({status})",
-                        started.elapsed().as_millis()
-                    )),
-                    None => Verdict::Fail("the process was still running 10 s after Quit".into()),
-                }
+                judge::quit(
+                    exited.map(|status| status.code()),
+                    started.elapsed().as_millis() as u64,
+                )
             }
         };
         self.record(Check::Quit, verdict);
