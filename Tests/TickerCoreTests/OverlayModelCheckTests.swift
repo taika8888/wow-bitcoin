@@ -174,7 +174,6 @@ private func click(_ state: OverlayState, on target: PressTarget = .body) -> Ove
         print("model check: \(seen.count) states, \(transitions) transitions, \(invariants.count) invariants")
     }
 
-    /// The pointer travel of one press, in points, against what the user meant by it.
     @Test(arguments: [false, true], [0.0, 2.9, 3, 40])
     func aPressIsADragOnlyWhenUnlockedAndPastTheThreshold(locked: Bool, travel: Double) {
         var settings = Settings()

@@ -10,11 +10,9 @@ public struct CandleSeries: Hashable, Sendable {
     }
 }
 
-/// Why a request for candles produced none.
 public enum FetchFailure: Error, Hashable, Sendable {
     /// No answer at all: offline, timed out, refused.
     case unreachable
-    /// Kraken answered with an HTTP status other than 200.
     case status(Int)
     /// Kraken answered 200 with a body that is not a usable response.
     case rejected(KrakenError)
@@ -36,7 +34,6 @@ public struct FailedFetch: Hashable, Sendable {
     public let at: Date
 }
 
-/// What the chart shows besides its candles.
 public enum ChartNotice: Hashable, Sendable {
     /// In place of the chart, when there are no candles to draw.
     case placeholder(String)
