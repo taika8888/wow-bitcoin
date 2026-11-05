@@ -8,6 +8,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "rustfmt.toml"
+      - ".gitattributes"
+      - "Tests/TickerCoreTests/Fixtures/kraken/**"
       - ".github/workflows/windows.yml"
   pull_request:
     paths:
@@ -16,6 +18,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "rustfmt.toml"
+      - ".gitattributes"
+      - "Tests/TickerCoreTests/Fixtures/kraken/**"
       - ".github/workflows/windows.yml"
   workflow_dispatch:
 
