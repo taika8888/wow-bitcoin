@@ -9,6 +9,7 @@ on:
       - "Tests/**"
       - "scripts/**"
       - "Support/**"
+      - "assets/**"
       - "crates/**"
       - ".github/workflows/macos.yml"
   pull_request:
@@ -19,6 +20,7 @@ on:
       - "Tests/**"
       - "scripts/**"
       - "Support/**"
+      - "assets/**"
       - "crates/**"
       - ".github/workflows/macos.yml"
   workflow_dispatch:
