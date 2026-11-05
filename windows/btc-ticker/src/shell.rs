@@ -236,7 +236,7 @@ impl Shell {
             }
             return;
         }
-        if let Some(event) = self.overlay.pointer(pointer) {
+        if let Some(event) = self.overlay.pointer(pointer, &self.app) {
             self.handle(Input::Overlay(event));
             self.overlay.follow(self.app.overlay().drag());
         }

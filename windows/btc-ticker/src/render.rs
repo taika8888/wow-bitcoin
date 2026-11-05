@@ -39,6 +39,17 @@ const AXIS_FONT_SIZE: f64 = 10.0;
 /// The lowest alpha that still takes clicks: at 0 a layered window passes clicks through to the game.
 const CLICKABLE_ALPHA: f32 = 1.0 / 255.0;
 
+/// The corner away from the ticker, kept inside the panel so the layered window receives its clicks.
+pub fn resize_grip(layout: &ExpandedLayout, scale: f64) -> Rect {
+    let side = 16.0 * scale;
+    Rect::new(
+        if layout.opens_right { layout.frame.width - side } else { 0.0 },
+        if layout.opens_down { layout.frame.height - side } else { 0.0 },
+        side,
+        side,
+    )
+}
+
 /// The ticker line, laid out once per frame and measured before placement decides where it goes.
 pub struct TickerText {
     layout: IDWriteTextLayout,
@@ -259,6 +270,23 @@ impl Renderer {
             if let Panel::Expanded { layout, timeframe, chart, notice } = &frame.panel {
                 self.draw_segments(layout, *timeframe, settings, scale)?;
                 self.draw_chart(layout.chart, *chart, notice.as_ref(), settings, scale)?;
+                if !settings.locked {
+                    let grip = resize_grip(layout, scale);
+                    let ink = self.brush(color(settings.text_color, 0.65))?;
+                    let x = if layout.opens_right { grip.max_x() } else { grip.min_x() };
+                    let y = if layout.opens_down { grip.max_y() } else { grip.min_y() };
+                    let dx = if layout.opens_right { -scale } else { scale };
+                    let dy = if layout.opens_down { -scale } else { scale };
+                    for length in [6.0, 10.0] {
+                        self.target.DrawLine(
+                            Vector2 { X: (x + 3.0 * dx) as f32, Y: (y + length * dy) as f32 },
+                            Vector2 { X: (x + length * dx) as f32, Y: (y + 3.0 * dy) as f32 },
+                            &ink,
+                            scale as f32,
+                            None,
+                        );
+                    }
+                }
             }
         }
         Ok(())
