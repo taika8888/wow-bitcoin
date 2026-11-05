@@ -20,8 +20,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, HICON, ICONINFO, KillTimer, MF_SEPARATOR, MF_STRING, PBT_APMRESUMEAUTOMATIC,
     PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SM_CXSMICON,
     SPI_SETWORKAREA, SetForegroundWindow, SetTimer, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    TrackPopupMenuEx, WINDOW_EX_STYLE, WM_APP, WM_CONTEXTMENU, WM_DISPLAYCHANGE, WM_ENDSESSION,
-    WM_NULL, WM_POWERBROADCAST, WM_SETTINGCHANGE, WM_TIMECHANGE, WM_TIMER, WNDCLASSW, WS_POPUP,
+    TrackPopupMenuEx, WINDOW_EX_STYLE, WM_ACTIVATE, WM_APP, WM_CONTEXTMENU, WM_DISPLAYCHANGE,
+    WM_ENDSESSION, WM_NULL, WM_POWERBROADCAST, WM_SETTINGCHANGE, WM_TIMECHANGE, WM_TIMER,
+    WNDCLASSW, WS_POPUP,
 };
 use windows::core::{HSTRING, w};
 
@@ -155,6 +156,11 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
         WM_SETTINGCHANGE if wparam.0 == SPI_SETWORKAREA.0 as usize => super::display_changed(),
         WM_POWERBROADCAST if wparam.0 == PBT_APMRESUMEAUTOMATIC as usize => {
             super::dispatch(Input::Woke)
+        }
+        WM_ACTIVATE => {
+            super::count_activation(wparam);
+            // SAFETY: forwards this window's own message unchanged.
+            return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
         }
         WM_ENDSESSION if wparam.0 != 0 => {
             // SAFETY: no arguments.

@@ -13,7 +13,7 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use ticker_core::{App, Effects, Env, Input, ShellFacts, Snapshot, Time};
 use ticker_paint::Fonts;
-use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HANDLE};
+use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HANDLE, WPARAM};
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Accessibility::UnhookWinEvent;
 use windows::Win32::UI::Controls::{
@@ -22,6 +22,7 @@ use windows::Win32::UI::Controls::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     DispatchMessageW, GetMessageW, IsDialogMessageW, MSG, PostQuitMessage, TranslateMessage,
+    WA_INACTIVE,
 };
 use windows::core::HSTRING;
 
@@ -145,6 +146,16 @@ fn dispatch(input: Input) {
     });
     if let Some(effects) = effects {
         apply(effects);
+    }
+}
+
+/// WM_ACTIVATE on the overlay or the host, which must never happen while the game is played: counted into the
+/// snapshot so the e2e can assert 0. Settings is left out, because the user opens it to type into it; the tray menu
+/// activates the host on purpose, so the count stays 0 only while the tray menu is unused.
+fn count_activation(wparam: WPARAM) {
+    if (wparam.0 & 0xFFFF) as u32 != WA_INACTIVE {
+        update_facts(|facts| facts.activations += 1);
+        publish();
     }
 }
 

@@ -49,7 +49,7 @@ pub struct Snapshot {
     pub last_close: Option<f64>,
     /// Click targets in screen px: "ticker", each timeframe label while expanded, "menu:<item>" while open.
     pub targets: BTreeMap<String, SnapshotFrame>,
-    /// WM_ACTIVATE (WA_ACTIVE or WA_CLICKACTIVE) received by the overlay. Clicking it must never raise it.
+    /// WM_ACTIVATE (WA_ACTIVE or WA_CLICKACTIVE) received by any app window but Settings: the overlay and the host.
     pub activations: u32,
     /// Left presses whose GetMessageExtraInfo is not `SYNTHETIC_INPUT_TAG`: someone touched the mouse mid-run.
     pub foreign_presses: u32,

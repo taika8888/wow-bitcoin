@@ -18,10 +18,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetCursorPos, GetMessageExtraInfo, GetMessagePos, HTCLIENT,
     HWND_TOPMOST, IDC_ARROW, LoadCursorW, MA_NOACTIVATE, RegisterClassW, SW_HIDE,
     SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos, ShowWindow, ULW_ALPHA,
-    UpdateLayeredWindow, WA_INACTIVE, WINDOW_EX_STYLE, WM_ACTIVATE, WM_CAPTURECHANGED,
-    WM_DPICHANGED, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST,
-    WM_RBUTTONUP, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_POPUP,
+    UpdateLayeredWindow, WINDOW_EX_STYLE, WM_ACTIVATE, WM_CAPTURECHANGED, WM_DPICHANGED,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST, WM_RBUTTONUP,
+    WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::w;
 
@@ -289,12 +288,8 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
         WM_CAPTURECHANGED if lparam.0 != hwnd.0 as isize => {
             pointer(PointerInput::CaptureLost(cursor_point()))
         }
-        // Must never happen; counted into the snapshot so the e2e can assert 0.
         WM_ACTIVATE => {
-            if (wparam.0 & 0xFFFF) as u32 != WA_INACTIVE {
-                super::update_facts(|facts| facts.activations += 1);
-                super::publish();
-            }
+            super::count_activation(wparam);
             // SAFETY: forwards this window's own message unchanged.
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
