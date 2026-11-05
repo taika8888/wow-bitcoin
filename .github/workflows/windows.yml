@@ -1,0 +1,66 @@
+name: windows
+
+on:
+  push:
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows.yml"
+  pull_request:
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows
+          cache-on-failure: true
+
+      # verify.ps1 exits 0 only when every line is PASS. The step also reads the lines itself, so a run that printed no
+      # e2e results, or exited 0 beside a FAIL or INCONCLUSIVE line, still fails.
+      - name: verify.ps1
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path windows\target\verify | Out-Null
+          $out = 'windows\target\verify\verify.txt'
+          powershell -NoProfile -ExecutionPolicy Bypass -File windows\scripts\verify.ps1 | Tee-Object -FilePath $out
+          $exit = $LASTEXITCODE
+          [IO.File]::WriteAllLines((Resolve-Path $out), [string[]](Get-Content $out))
+          $lines = @(Get-Content $out | Select-String '^(PASS|FAIL|INCONCLUSIVE) ' | ForEach-Object { $_.Line })
+          $notPass = @($lines | Where-Object { $_ -notmatch '^PASS ' })
+          $e2e = @($lines | Where-Object { $_ -match '^\S+\s+e2e-' })
+          "## verify.ps1`n``````" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          Get-Content $out | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          '```' | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          "verify.ps1 exited $exit; $($lines.Count) result lines, $($notPass.Count) not PASS, $($e2e.Count) from the e2e"
+          if ($exit -ne 0 -or $notPass.Count -gt 0 -or $e2e.Count -eq 0) { exit 1 }
+
+      - name: Upload screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-verify-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            windows/target/verify/*.png
+            windows/target/verify/*.log
+            windows/target/verify/verify.txt
+          if-no-files-found: warn
