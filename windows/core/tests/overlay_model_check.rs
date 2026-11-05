@@ -130,6 +130,8 @@ const MENU_NO_DRAG: &str = "nothing drags while the menu is open";
 const MENU_RELEASE: &str =
     "a release with the menu open closes it and never changes the mode or position";
 const MENU_LOCK: &str = "Lock in the menu toggles the lock";
+const TOGGLE_LOCK: &str =
+    "ToggleLock flips the lock and changes nothing else, apart from ending a drag it locks";
 
 static INVARIANTS: &[Invariant] = &[
     Invariant {
@@ -296,6 +298,20 @@ static INVARIANTS: &[Invariant] = &[
                 || a.state.settings.locked != b.state.settings.locked
         },
     },
+    Invariant {
+        name: TOGGLE_LOCK,
+        holds: |_, b, e, a| {
+            if *e != OverlayEvent::ToggleLock {
+                return true;
+            }
+            let mut expected = b.state.clone();
+            expected.settings.locked = !b.state.settings.locked;
+            if expected.settings.locked && expected.drag == DragPhase::Dragging {
+                expected.drag = DragPhase::Idle;
+            }
+            a.state == expected
+        },
+    },
 ];
 
 struct Exploration {
@@ -379,6 +395,63 @@ fn explore(reduce: Reduce) -> Exploration {
     }
 }
 
+type Reachable = (&'static str, fn(&World) -> bool);
+
+/// States the exploration must reach, each with what an invariant would miss without it.
+static REACHABLE: &[Reachable] = &[
+    ("dragging must be reachable", |w| {
+        w.state.drag == DragPhase::Dragging
+    }),
+    ("hiding must be reachable", |w| !w.state.is_visible()),
+    (
+        "a dropped overlay must be lockable, or the locked-move invariant only sees the default spot",
+        |w| w.state.settings.locked && w.state.settings.position == Some(DROP[1]),
+    ),
+    ("expanded 1m must be reachable", |w| {
+        w.state.mode == OverlayMode::Expanded(Timeframe::M1)
+    }),
+    ("expanded 15m must be reachable", |w| {
+        w.state.mode == OverlayMode::Expanded(Timeframe::M15)
+    }),
+    ("expanded 4h must be reachable", |w| {
+        w.state.mode == OverlayMode::Expanded(Timeframe::H4)
+    }),
+    ("hidden while expanded must be reachable", |w| {
+        w.state.mode != OverlayMode::Collapsed && !w.state.is_visible()
+    }),
+    ("clicks must expand a locked overlay", |w| {
+        w.state.mode != OverlayMode::Collapsed && w.state.settings.locked
+    }),
+    (
+        "a locked press must be reachable, or the locked-click invariant is vacuous",
+        |w| w.locked_press,
+    ),
+    (
+        "collapsed with a non-default choice must be reachable, or the round trip only ever sees the default",
+        |w| {
+            w.state.mode == OverlayMode::Collapsed
+                && w.state.settings.timeframe != Settings::default().timeframe
+        },
+    ),
+    (
+        "the menu must open over a locked chart, or the menu invariants only see the collapsed ticker",
+        |w| w.state.menu_open && w.state.mode != OverlayMode::Collapsed && w.state.settings.locked,
+    ),
+    (
+        "a press with the menu open must be reachable, or a press that closes the menu leaves the menu release \
+         and Lock invariants nothing to judge",
+        |w| w.state.menu_open && w.state.drag == DragPhase::Pressed,
+    ),
+];
+
+fn unreached(x: &Exploration) -> Vec<&'static str> {
+    REACHABLE
+        .iter()
+        .filter(|(_, reached)| !x.reached.iter().any(reached))
+        .map(|(name, _)| *name)
+        .collect()
+}
+
 #[test]
 fn every_reachable_transition_keeps_the_invariants() {
     let x = explore(reduce);
@@ -389,45 +462,8 @@ fn every_reachable_transition_keeps_the_invariants() {
         x.violations.is_empty(),
         "the real reducer broke an invariant"
     );
-    let any = |p: &dyn Fn(&World) -> bool| x.reached.iter().any(p);
-    assert!(
-        any(&|w| w.state.drag == DragPhase::Dragging),
-        "dragging must be reachable"
-    );
-    assert!(any(&|w| !w.state.is_visible()), "hiding must be reachable");
-    assert!(
-        any(&|w| w.state.settings.locked && w.state.settings.position == Some(DROP[1])),
-        "a dropped overlay must be lockable, or the locked-move invariant only sees the default spot"
-    );
-    for t in Timeframe::ALL {
-        assert!(
-            any(&|w| w.state.mode == OverlayMode::Expanded(t)),
-            "expanded {t:?} must be reachable"
-        );
-    }
-    assert!(
-        any(&|w| w.state.mode != OverlayMode::Collapsed && !w.state.is_visible()),
-        "hidden while expanded must be reachable"
-    );
-    assert!(
-        any(&|w| w.state.mode != OverlayMode::Collapsed && w.state.settings.locked),
-        "clicks must expand a locked overlay"
-    );
-    assert!(
-        any(&|w| w.locked_press),
-        "a locked press must be reachable, or the locked-click invariant is vacuous"
-    );
-    assert!(
-        any(&|w| w.state.mode == OverlayMode::Collapsed
-            && w.state.settings.timeframe != Settings::default().timeframe),
-        "collapsed with a non-default choice must be reachable, or the round trip only ever sees the default"
-    );
-    assert!(
-        any(&|w| w.state.menu_open
-            && w.state.mode != OverlayMode::Collapsed
-            && w.state.settings.locked),
-        "the menu must open over a locked chart, or the menu invariants only see the collapsed ticker"
-    );
+    let unreached = unreached(&x);
+    assert!(unreached.is_empty(), "never reached: {unreached:#?}");
     println!(
         "model check: {} states, {} transitions, {} invariants",
         x.reached.len(),
@@ -452,10 +488,13 @@ fn press_released(s: &OverlayState, e: &OverlayEvent, over: PressTarget) -> bool
 static MUTANTS: &[Mutant] = &[
     Mutant {
         breaks: LOCKED_NEVER_DRAGS,
-        also_breaks: &[(
-            LOCKED_STAYS,
-            "releasing a locked drag must store the drop point and must not move a locked overlay",
-        )],
+        also_breaks: &[
+            (
+                LOCKED_STAYS,
+                "releasing a locked drag must store the drop point and must not move a locked overlay",
+            ),
+            (TOGGLE_LOCK, "locking mid-drag must end the drag"),
+        ],
         reduce: |s, e| {
             let mut n = reduce(s, e);
             if matches!(e, OverlayEvent::ToggleLock) && s.drag == DragPhase::Dragging {
@@ -466,7 +505,10 @@ static MUTANTS: &[Mutant] = &[
     },
     Mutant {
         breaks: HIDDEN_IDLE,
-        also_breaks: &[],
+        also_breaks: &[(
+            TOGGLE_LOCK,
+            "from a hidden press, ToggleLock either keeps the press or changes more than the lock",
+        )],
         reduce: |s, e| {
             let mut n = reduce(s, e);
             if *e == OverlayEvent::Pressed {
@@ -657,7 +699,10 @@ static MUTANTS: &[Mutant] = &[
     },
     Mutant {
         breaks: MENU_VISIBLE,
-        also_breaks: &[],
+        also_breaks: &[(
+            TOGGLE_LOCK,
+            "from a hidden open menu, ToggleLock either keeps it open or changes more than the lock",
+        )],
         reduce: |s, e| {
             let mut n = reduce(s, e);
             if matches!(
@@ -722,7 +767,39 @@ static MUTANTS: &[Mutant] = &[
             n
         },
     },
+    Mutant {
+        breaks: TOGGLE_LOCK,
+        also_breaks: &[],
+        reduce: |s, e| {
+            let mut n = reduce(s, e);
+            if *e == OverlayEvent::ToggleLock {
+                n.menu_open = false;
+            }
+            n
+        },
+    },
 ];
+
+/// Breaks no invariant: with no press ever made while the menu is open, the menu release and Lock invariants have
+/// nothing to judge. Only the reachability expectation catches it.
+fn press_closes_the_menu(s: &OverlayState, e: &OverlayEvent) -> OverlayState {
+    let mut n = reduce(s, e);
+    if *e == OverlayEvent::Pressed {
+        n.menu_open = false;
+    }
+    n
+}
+
+#[test]
+fn a_press_that_closes_the_menu_is_caught_by_reachability() {
+    let x = explore(press_closes_the_menu);
+    assert!(x.violations.is_empty(), "{:?}", x.violations.keys());
+    assert_eq!(
+        unreached(&x),
+        [REACHABLE.last().unwrap().0],
+        "only the press-with-the-menu-open expectation notices"
+    );
+}
 
 #[test]
 fn every_invariant_has_a_mutant() {
