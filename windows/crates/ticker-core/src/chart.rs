@@ -3,7 +3,7 @@ use std::ops::RangeInclusive;
 use crate::app::RequestId;
 use crate::display::Tone;
 use crate::kraken::FetchFailure;
-use crate::market::{Candle, Timeframe};
+use crate::market::{Candle, Timeframe, Zoom};
 use crate::overlay::{OverlayMode, OverlayState};
 use crate::time::Timestamp;
 
@@ -151,6 +151,8 @@ pub struct CandleChart {
     pub price_domain: RangeInclusive<f64>,
     pub time_domain: RangeInclusive<Timestamp>,
     pub last_price: f64,
+    /// How many candles the bars stand for, which is more than `bars.len()` once runs of candles merge.
+    pub candle_count: usize,
 }
 
 impl CandleChart {
@@ -159,15 +161,34 @@ impl CandleChart {
     /// Minimum body height as a fraction of the price domain.
     pub const MINIMUM_BODY: f64 = 0.004;
 
-    pub fn new(candles: &[Candle], timeframe: Timeframe) -> Option<CandleChart> {
-        let (first, last) = (candles.first()?, candles.last()?);
-        let low = candles.iter().map(|candle| candle.low).fold(f64::INFINITY, f64::min);
-        let high = candles.iter().map(|candle| candle.high).fold(f64::NEG_INFINITY, f64::max);
+    /// Shows the newest candles the zoom asks for, with the price domain fitted to those alone. Past `max_bars` (at
+    /// least 1), each bar merges a run of adjacent candles counted from the newest, and a partial run at the oldest end
+    /// is left out.
+    pub fn new(all: &[Candle], timeframe: Timeframe, zoom: Zoom, max_bars: usize) -> Option<CandleChart> {
+        let visible = zoom.visible_count(timeframe, all.len());
+        let per_bar = visible.div_ceil(max_bars.max(1));
+        if per_bar == 0 {
+            return None;
+        }
+        let candles = &all[all.len() - (visible - visible % per_bar)..];
+        let merged: Vec<Candle> = candles
+            .chunks_exact(per_bar)
+            .map(|run| Candle {
+                time: run[0].time,
+                open: run[0].open,
+                high: run.iter().map(|candle| candle.high).fold(f64::NEG_INFINITY, f64::max),
+                low: run.iter().map(|candle| candle.low).fold(f64::INFINITY, f64::min),
+                close: run[run.len() - 1].close,
+            })
+            .collect();
+        let (first, last) = (merged.first()?, merged.last()?);
+        let low = merged.iter().map(|candle| candle.low).fold(f64::INFINITY, f64::min);
+        let high = merged.iter().map(|candle| candle.high).fold(f64::NEG_INFINITY, f64::max);
         let range = if high > low { high - low } else { high * 0.001 };
         let price_domain = (low - range * Self::PRICE_PADDING)..=(high + range * Self::PRICE_PADDING);
-        let interval = timeframe.interval_seconds();
+        let interval = timeframe.interval_seconds() * per_bar as f64;
         let minimum_body = (price_domain.end() - price_domain.start()) * Self::MINIMUM_BODY;
-        let bars = candles
+        let bars = merged
             .iter()
             .map(|candle| {
                 let middle = (candle.open + candle.close) / 2.0;
@@ -187,6 +208,7 @@ impl CandleChart {
             price_domain,
             time_domain: first.time..=last.time.plus(interval),
             last_price: last.close,
+            candle_count: candles.len(),
         })
     }
 }

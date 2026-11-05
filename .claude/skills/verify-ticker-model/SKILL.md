@@ -1,11 +1,11 @@
 ---
 name: verify-ticker-model
-description: Model-check the Windows BTC ticker's core state machines (App::handle and OverlayState::reduce in windows/crates/ticker-core) over every interleaving of inputs. Use before committing any change to windows/crates/ticker-core/src/app.rs, chart.rs, feed.rs, overlay.rs or kraken.rs, when a model check in cargo test fails, or when a change is meant to alter fetch, schedule, click, drag, save or render behavior.
+description: Model-check the Windows BTC ticker's core state machines (App::handle and OverlayState::reduce in windows/crates/ticker-core) over every interleaving of inputs. Use before committing any change to windows/crates/ticker-core/src/app.rs, chart.rs, feed.rs, overlay.rs, market.rs or kraken.rs, when a model check in cargo test fails, or when a change is meant to alter fetch, schedule, click, drag, zoom, save or render behavior.
 ---
 
 # Verify the ticker's state machines
 
-The Windows ticker's core is two pure state machines. `App::handle` takes every input the shell sends (pointer events, ticks, wakes, fetch results, settings file changes) and returns the effects the shell runs (fetch, save, render). `OverlayState::reduce` decides clicks, drags, lock and visibility. Bugs there show up as duplicate requests to Kraken, a ticker that jumps or will not expand, settings written back over the user's edit, or a frozen display. All of these depend on input order, and unit tests reach few orders. The model checks try every order up to a bound, through the real code.
+The Windows ticker's core is two pure state machines. `App::handle` takes every input the shell sends (pointer events, ticks, wakes, fetch results, settings file changes) and returns the effects the shell runs (fetch, save, render). `OverlayState::reduce` decides clicks, drags, zoom, lock and visibility. Bugs there show up as duplicate requests to Kraken, a ticker that jumps or will not expand, a chart that zooms while hidden or skips a rung, settings written back over the user's edit, or a frozen display. All of these depend on input order, and unit tests reach few orders. The model checks try every order up to a bound, through the real code.
 
 ## What is verified
 
@@ -28,7 +28,7 @@ All of this lives in `windows/crates/ticker-core/tests/model_check/`, in the `mo
 - **Render is emitted iff the overlay, the feed status or a chart load changed.** Prevents a screen that lags the state (missed render) and wasted redraws.
 - **nothing is overdue, and with no quote out the next wake is no later than the next quote.** Prevents a shell timer armed by `App::next_wake` from sleeping past a due fetch or status change.
 
-`overlay.rs`, the reducer check (14 invariants, ported from the macOS `OverlayModelCheckTests.swift`):
+`overlay.rs`, the reducer check (18 invariants, ported from the macOS `OverlayModelCheckTests.swift`):
 
 - **a locked overlay is never dragging.** Lock holds.
 - **a hidden overlay is never pressed or dragging.** No ghost drags.
@@ -44,8 +44,14 @@ All of this lives in `windows/crates/ticker-core/tests/model_check/`, in the `mo
 - **hiding and showing never change the mode.** Alt-tabbing out of WoW does not close the chart.
 - **a locked overlay moves only through a settings edit.** Lock holds against drops.
 - **a finished drag stores the drop point and never changes the mode.** Drags persist and are not clicks.
+- **only a zoom event on a visible chart changes the zoom, apart from a settings edit.** The wheel over a collapsed or hidden overlay, or any other input, never changes the saved zoom.
+- **a zoom event on a visible chart moves one rung its way, or stays at the end of the ladder.** One notch is one rung, and the ends hold.
+- **a zoom event changes nothing but the zoom: never mode, timeframe, position, lock or drag.** Scrolling over the chart cannot close it, switch it, move it or drop a press.
+- **on a visible chart away from the ends of the ladder, zooming in then out returns to the same state.** The ladder has no one-way rungs.
 
-Each test also asserts reachability facts, such as dragging, a stale quote, offline, two failures in a row, a failed candle fetch, and a locked press. These keep the invariants from passing vacuously. If one of those asserts fails, the model lost coverage. That is not a bug in the app.
+The macOS invariant that the zoom is always a rung of the ladder has no Windows port: `Zoom` is an enum, so no other value can exist.
+
+Each test also asserts reachability facts, such as dragging, a stale quote, offline, two failures in a row, a failed candle fetch, a locked press, every zoom rung on the chart, a hidden zoomed chart, a zoom kept across collapsing, and a zoomed chart with candles out or loaded. These keep the invariants from passing vacuously. If one of those asserts fails, the model lost coverage. That is not a bug in the app.
 
 ## Tool and why
 
@@ -59,23 +65,23 @@ The only dependency is the Rust toolchain the repo already uses (`rust-version` 
 
 ## Bounds and assumptions
 
-The reducer check covers its whole reachable state space and asserts `unexpanded == 0`. It starts from 12 worlds (locked × onlyWhenWoWActive × the 3 frontmost apps). Its alphabet is: press, pointer moves of 1 px and 50 px, toggle Lock, release over the body, outside, or each of the 3 timeframe controls at 2 drop points, each of the 3 apps activated, settings edits for each locked × onlyWhenWoWActive pair, clearing the position, and switching the timeframe to 1m.
+The reducer check covers its whole reachable state space and asserts `unexpanded == 0`. It starts from 12 worlds (locked × onlyWhenWoWActive × the 3 frontmost apps). Its alphabet is: press, pointer moves of 1 px and 50 px, toggle Lock, zoom in and out, release over the body, outside, or each of the 3 timeframe controls at 2 drop points, each of the 3 apps activated, settings edits for each locked × onlyWhenWoWActive pair, clearing the position, switching the timeframe to 1m, and setting the zoom to all.
 
 The App check is bounded by depth. It starts from `App::new(Settings::default(), Frontmost::Wow, T0)`.
 
 - **Time.** Ticks at +1 s, +4 s and +16 s, and a wake at +1 s. Results arrive at the current clock. Times never go backwards.
 - **Results.** Each outstanding quote or candle request can succeed (one fixed Kraken body) or fail (`HttpOutcome::Unreachable`). The last delivered quote and candle result can also arrive again, as a late duplicate.
 - **Settings.** In-app edits to refresh 2 s, refresh 30 s, or flipping onlyWhenWoWActive. A file change to refresh 2 s with the 4h timeframe.
-- **Full alphabet** (`every_interleaving_of_every_input_keeps_the_app_invariants`). Every input kind, including press, pointer moves of 2 px and 50 px, release over the body, outside, the 1m or 4h control, Lock, and each of the 3 apps activated. Depth 7.
-- **Feed alphabet** (`every_deeper_interleaving_of_feed_inputs_keeps_the_app_invariants`). Drops pointer moves, outside and 4h releases, Lock, and activating the ticker, which the reducer check already covers exhaustively. Depth 8.
+- **Full alphabet** (`every_interleaving_of_every_input_keeps_the_app_invariants`). Every input kind, including press, pointer moves of 2 px and 50 px, release over the body, outside, the 1m or 4h control, Lock, zoom in and out, and each of the 3 apps activated. Depth 7.
+- **Feed alphabet** (`every_deeper_interleaving_of_feed_inputs_keeps_the_app_invariants`). Drops pointer moves, outside and 4h releases, Lock, zoom, and activating the ticker, which the reducer check already covers exhaustively. Depth 8.
 
 Measured on this machine at the sync commit, inside `verify.ps1`'s `cargo test` run:
 
 | Check | States | Transitions | Scope | Time |
 | --- | --- | --- | --- | --- |
-| overlay | 576 | 13,248 | exhaustive, longest path 11 | 0.0 s |
-| app (full) | 142,613 | 881,540 | depth 7, 101,756 states at the bound | 4.4 s |
-| app feed | 291,029 | 1,322,762 | depth 8, 208,978 states at the bound | 6.9 s |
+| overlay | 3,456 | 89,856 | exhaustive, longest path 13 | 0.2 s |
+| app (full) | 163,494 | 1,047,044 | depth 7, 119,271 states at the bound | 5.2 s |
+| app feed | 291,029 | 1,322,762 | depth 8, 208,978 states at the bound | 7.0 s |
 
 The whole `model_check` target takes about 7 s once built, because the tests run in parallel. `cargo test` prints these lines as `model check ...`. Run it with `-- --show-output` to see them.
 
@@ -84,8 +90,8 @@ Out of scope, so a pass says nothing about:
 - HTTP statuses other than 200, malformed bodies, and other prices (`tests/core/kraken.rs` covers parsing);
 - refresh values other than 2, 5 and 30 s, and paths longer than the depth bound;
 - clocks that go backwards (`advance` clamps them, unchecked here);
-- layout, placement, display formatting, `Settings::decode`, `Snapshot` and `CandleChart` geometry (`tests/core/` covers these);
-- everything the Win32 shell does.
+- layout, placement, display formatting, `Settings::decode`, `Snapshot`, and `CandleChart` geometry, including which candles a zoom shows and how they merge into the bar budget (`tests/core/` covers these);
+- everything the Win32 shell does, including how wheel deltas add up to zoom steps (the end-to-end check covers that).
 
 The App checker computes "a quote is due" with the code's own `FeedSchedule::delay`, and "candles are due" with the code's `Timeframe::spec().refresh_seconds`. So it checks that the schedule is honored, not the backoff numbers themselves. `tests/core/app.rs` pins those numbers.
 
@@ -105,7 +111,7 @@ To prove the checks can still fail, run this from the repo root:
 powershell -NoProfile -ExecutionPolicy Bypass -File windows\scripts\mutants.ps1 [-Only <mutant-name>]
 ```
 
-It needs a clean `windows/crates/ticker-core/src`, and it refuses to start otherwise. A killed run skips its restore and can leave a mutant in the source, so before you commit after an interrupted run, check `git status` and restore with `git checkout -- windows/crates/ticker-core/src`. Each mutant takes about 14 s, and the full set of 18 takes about 4 minutes. Logs go to `windows/target/verify/mutants/<name>.log`.
+It needs a clean `windows/crates/ticker-core/src`, and it refuses to start otherwise. A killed run skips its restore and can leave a mutant in the source, so before you commit after an interrupted run, check `git status` and restore with `git checkout -- windows/crates/ticker-core/src`. Each mutant takes about 13 s, and the full set of 23 takes about 5 minutes. Logs go to `windows/target/verify/mutants/<name>.log`.
 
 ## Read a counterexample
 
@@ -156,6 +162,11 @@ Each checker keeps its own records (`World` in `app.rs` and `overlay.rs`). These
 | locked-check-dropped-from-pointer-move | src/overlay.rs | lock test on pointer move | a locked press released over the body is a click, however far the pointer moved | PASS |
 | locked-ticker-drags | src/overlay.rs | both lock tests | a locked ticker never drags | PASS |
 | hidden-overlay-keeps-drag | src/overlay.rs | press reset on hide | a hidden overlay is never pressed or dragging | PASS |
+| zoom-while-hidden | src/overlay.rs | visibility gate on zoom | only a zoom event on a visible chart changes the zoom, apart from a settings edit | PASS |
+| zoom-while-collapsed | src/overlay.rs | expanded gate on zoom | only a zoom event on a visible chart changes the zoom, apart from a settings edit | PASS |
+| zoom-in-steps-out | src/market.rs | zoom direction | a zoom event on a visible chart moves one rung its way, or stays at the end of the ladder | PASS |
+| zoom-drops-the-press | src/overlay.rs | zoom touches only the zoom | a zoom event changes nothing but the zoom: never mode, timeframe, position, lock or drag | PASS |
+| zoom-out-skips-a-rung | src/market.rs | one rung per step | on a visible chart away from the ends of the ladder, zooming in then out returns to the same state | PASS |
 
 `locked-check-dropped-from-pointer-move` is not an equivalent mutant. The locked normalization at the end of `reduce` turns its drag back into `Idle`, so the release that follows is no longer a click, and the locked ticker stops opening its chart.
 
@@ -163,15 +174,15 @@ Each checker keeps its own records (`World` in `app.rs` and `overlay.rs`). These
 
 | Check | Covers |
 | --- | --- |
-| App (`tests/model_check/app.rs`) | `src/app.rs`: `App::new`, `App::handle`, `App::next_wake`, `App::status`, `App::chart_load`, `advance`, `issue`. `src/chart.rs`: `ChartFeed::{wanted, due, due_at, begin, awaits, finish}`, `CandleLoad::{due_at, is_loading, failure}`. `src/feed.rs`: `FeedSchedule::{started, finished, woke, next_start, is_due, delay, request_timeout}`, `FeedStatus::derive`. `src/kraken.rs`: `quote_from`, `candles_from` (on the two fixed bodies and `Unreachable`). `src/overlay.rs`: `OverlayState::reduce`, `is_visible`, `mode`. `src/settings.rs`: `Settings::clamped`. |
-| Reducer (`tests/model_check/overlay.rs`) | `src/overlay.rs`: `OverlayState::{new, reduce, mode, is_visible, drag, settings}`. `src/settings.rs`: `Settings::clamped`. |
+| App (`tests/model_check/app.rs`) | `src/app.rs`: `App::new`, `App::handle`, `App::next_wake`, `App::status`, `App::chart_load`, `advance`, `issue`. `src/chart.rs`: `ChartFeed::{wanted, due, due_at, begin, awaits, finish}`, `CandleLoad::{due_at, is_loading, failure}`. `src/feed.rs`: `FeedSchedule::{started, finished, woke, next_start, is_due, delay, request_timeout}`, `FeedStatus::derive`. `src/kraken.rs`: `quote_from`, `candles_from` (on the two fixed bodies and `Unreachable`). `src/overlay.rs`: `OverlayState::reduce`, `is_visible`, `mode`. `src/market.rs`: `Zoom::stepped`. `src/settings.rs`: `Settings::clamped`. |
+| Reducer (`tests/model_check/overlay.rs`) | `src/overlay.rs`: `OverlayState::{new, reduce, mode, is_visible, drag, settings}`, the `Zoom` event included. `src/market.rs`: `Zoom::stepped`. `src/settings.rs`: `Settings::clamped`. |
 | Engine (`tests/model_check/engine.rs`, `words.rs`) | The search, fingerprints and counterexample wording, shared by both checks. |
 | Mutants (`windows/scripts/mutants.ps1`) | The rows above. |
 
-**Sync commit: `7767acc`** ("Prove the model checks catch broken cores"). At this commit, both checks were confirmed to describe the covered code. All 18 mutants were caught, and `verify.ps1` printed only PASS. To see whether the verification needs another look, run this from the repo root:
+**Sync commit: `a0f1dc6`** ("Prove the model checks catch broken zoom"). At this commit, both checks were confirmed to describe the covered code, chart zoom included. All 23 mutants were caught, and `verify.ps1` printed only PASS. To see whether the verification needs another look, run this from the repo root:
 
 ```
-git log --oneline 7767acc..HEAD -- windows/crates/ticker-core/src windows/crates/ticker-core/tests/model_check windows/scripts/mutants.ps1
+git log --oneline a0f1dc6..HEAD -- windows/crates/ticker-core/src windows/crates/ticker-core/tests/model_check windows/scripts/mutants.ps1
 ```
 
 If it lists commits, read their diffs against the coverage record. Update the model, invariants and mutants where behavior changed intentionally. Rerun `cargo test -p ticker-core --test model_check` and `mutants.ps1`. Only then move the sync commit forward to the commit you checked, and update the table of measured numbers.

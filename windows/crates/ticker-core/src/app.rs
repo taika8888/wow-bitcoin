@@ -118,7 +118,7 @@ impl App {
                     return Vec::new();
                 }
                 self.advance(now);
-                self.charts.finish(timeframe, kraken::candles_from(&outcome, timeframe), self.now);
+                self.charts.finish(timeframe, kraken::candles_from(&outcome), self.now);
                 charts_changed = true;
             }
         }
@@ -183,10 +183,11 @@ impl App {
         }
     }
 
-    /// What the expanded chart draws, or None while collapsed or with no candles yet.
-    pub fn chart(&self) -> Option<CandleChart> {
+    /// What the expanded chart draws at the saved zoom in at most `max_bars` bars, or None while collapsed or with no
+    /// candles yet.
+    pub fn chart(&self, max_bars: usize) -> Option<CandleChart> {
         let (timeframe, load) = self.expanded()?;
-        CandleChart::new(&load.series()?.candles, timeframe)
+        CandleChart::new(&load.series()?.candles, timeframe, self.settings().zoom, max_bars)
     }
 
     /// The earliest time at which a tick would start a request or turn the status stale or offline. The shell arms a

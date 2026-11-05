@@ -1,7 +1,8 @@
 //! Every state `OverlayState::reduce` can reach, under every event, port of OverlayModelCheckTests.swift.
 
 use ticker_core::{
-    DragPhase, Frontmost, OverlayEvent, OverlayMode, OverlayState, PressTarget, ScreenPoint, Settings, Timeframe,
+    DragPhase, Frontmost, OverlayEvent, OverlayMode, OverlayState, PressTarget, ScreenPoint, Settings, Timeframe, Zoom,
+    ZoomStep,
 };
 
 use crate::engine::{Model, explore};
@@ -21,7 +22,7 @@ pub struct World {
 
 type Invariant = (&'static str, fn(&World, &OverlayEvent, &World) -> bool);
 
-const INVARIANTS: [Invariant; 14] = [
+const INVARIANTS: [Invariant; 18] = [
     ("a locked overlay is never dragging", |_, _, after| {
         !after.state.settings().locked || after.state.drag() != DragPhase::Dragging
     }),
@@ -103,7 +104,57 @@ const INVARIANTS: [Invariant; 14] = [
         before.state.drag() != DragPhase::Dragging
             || (after.state.settings().position == Some(*ticker_origin) && after.state.mode() == before.state.mode())
     }),
+    ("only a zoom event on a visible chart changes the zoom, apart from a settings edit", |before, event, after| {
+        match event {
+            OverlayEvent::SettingsEdited(_) => true,
+            OverlayEvent::Zoom(_) if chart_on_screen(&before.state) => true,
+            _ => after.state.settings().zoom == before.state.settings().zoom,
+        }
+    }),
+    (
+        "a zoom event on a visible chart moves one rung its way, or stays at the end of the ladder",
+        |before, event, after| {
+            let OverlayEvent::Zoom(step) = event else { return true };
+            if !chart_on_screen(&before.state) {
+                return true;
+            }
+            let from = Zoom::ALL.iter().position(|zoom| *zoom == before.state.settings().zoom).unwrap_or_default();
+            let to = match step {
+                ZoomStep::In => from.saturating_sub(1),
+                ZoomStep::Out => (from + 1).min(Zoom::ALL.len() - 1),
+            };
+            after.state.settings().zoom == Zoom::ALL[to]
+        },
+    ),
+    (
+        "a zoom event changes nothing but the zoom: never mode, timeframe, position, lock or drag",
+        |before, event, after| {
+            if !matches!(event, OverlayEvent::Zoom(_)) {
+                return true;
+            }
+            let (before, after) = (&before.state, &after.state);
+            Settings { zoom: before.settings().zoom, ..*after.settings() } == *before.settings()
+                && (after.mode(), after.drag(), after.frontmost()) == (before.mode(), before.drag(), before.frontmost())
+        },
+    ),
+    (
+        "on a visible chart away from the ends of the ladder, zooming in then out returns to the same state",
+        |_, _, after| {
+            let zoom = after.state.settings().zoom;
+            if !chart_on_screen(&after.state) || zoom == Zoom::Quarter || zoom == Zoom::All {
+                return true;
+            }
+            let there_and_back =
+                |first, second| after.state.reduce(OverlayEvent::Zoom(first)).reduce(OverlayEvent::Zoom(second));
+            there_and_back(ZoomStep::In, ZoomStep::Out) == after.state
+                && there_and_back(ZoomStep::Out, ZoomStep::In) == after.state
+        },
+    ),
 ];
+
+fn chart_on_screen(state: &OverlayState) -> bool {
+    state.mode() != OverlayMode::Collapsed && state.is_visible()
+}
 
 fn click(state: &OverlayState) -> OverlayState {
     state
@@ -117,6 +168,8 @@ pub fn events(settings: &Settings) -> Vec<OverlayEvent> {
         OverlayEvent::PointerMoved { distance: 1.0 },
         OverlayEvent::PointerMoved { distance: 50.0 },
         OverlayEvent::ToggleLock,
+        OverlayEvent::Zoom(ZoomStep::In),
+        OverlayEvent::Zoom(ZoomStep::Out),
     ];
     let targets =
         [PressTarget::Body, PressTarget::Outside].into_iter().chain(Timeframe::ALL.map(PressTarget::Timeframe));
@@ -131,6 +184,7 @@ pub fn events(settings: &Settings) -> Vec<OverlayEvent> {
     }
     events.push(OverlayEvent::SettingsEdited(Settings { position: None, ..*settings }));
     events.push(OverlayEvent::SettingsEdited(Settings { timeframe: Timeframe::M1, ..*settings }));
+    events.push(OverlayEvent::SettingsEdited(Settings { zoom: Zoom::All, ..*settings }));
     events
 }
 
@@ -209,6 +263,20 @@ fn every_reachable_reducer_transition_keeps_the_invariants() {
         "collapsed with a non-default choice must be reachable, or the round trip only ever sees the default"
     );
     assert!(locked_press, "a locked press must be reachable, or the locked-click invariant is vacuous");
+    for zoom in Zoom::ALL {
+        assert!(
+            reached.iter().any(|s| s.mode() != OverlayMode::Collapsed && s.settings().zoom == zoom),
+            "zoom {zoom:?} must be reachable on the chart"
+        );
+    }
+    assert!(
+        any(|s| s.mode() != OverlayMode::Collapsed && !s.is_visible() && s.settings().zoom != Zoom::Standard),
+        "a zoomed chart must be hideable, or zooming while hidden is never tried"
+    );
+    assert!(
+        any(|s| s.mode() == OverlayMode::Collapsed && ![Zoom::Standard, Zoom::All].contains(&s.settings().zoom)),
+        "a zoom must outlive collapsing, or zooming while collapsed only ever sees the default and the edit"
+    );
 }
 
 #[test]

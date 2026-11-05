@@ -72,6 +72,17 @@ $mutants = @(
     @{ Name = 'hidden-overlay-keeps-drag'; File = 'src\overlay.rs'; Expect = 'a hidden overlay is never pressed or dragging'
         Edits = @(@{ Find = 'if !next.is_visible() || (next.settings.locked && next.drag == DragPhase::Dragging) {'
                 Replace = 'if next.settings.locked && next.drag == DragPhase::Dragging {' }) }
+    @{ Name = 'zoom-while-hidden'; File = 'src\overlay.rs'; Expect = 'only a zoom event on a visible chart changes the zoom, apart from a settings edit'
+        Edits = @(@{ Find = 'if self.expanded && self.is_visible() {'; Replace = 'if self.expanded {' }) }
+    @{ Name = 'zoom-while-collapsed'; File = 'src\overlay.rs'; Expect = 'only a zoom event on a visible chart changes the zoom, apart from a settings edit'
+        Edits = @(@{ Find = 'if self.expanded && self.is_visible() {'; Replace = 'if self.is_visible() {' }) }
+    @{ Name = 'zoom-in-steps-out'; File = 'src\market.rs'; Expect = 'a zoom event on a visible chart moves one rung its way, or stays at the end of the ladder'
+        Edits = @(@{ Find = 'ZoomStep::In => self.index().checked_sub(1),'; Replace = 'ZoomStep::In => Some(self.index() + 1),' }) }
+    @{ Name = 'zoom-drops-the-press'; File = 'src\overlay.rs'; Expect = 'a zoom event changes nothing but the zoom: never mode, timeframe, position, lock or drag'
+        Edits = @(@{ Find = 'next.settings.zoom = self.settings.zoom.stepped(step);'
+                Replace = 'next.settings.zoom = self.settings.zoom.stepped(step); next.drag = DragPhase::Idle;' }) }
+    @{ Name = 'zoom-out-skips-a-rung'; File = 'src\market.rs'; Expect = 'on a visible chart away from the ends of the ladder, zooming in then out returns to the same state'
+        Edits = @(@{ Find = 'ZoomStep::Out => Some(self.index() + 1),'; Replace = 'ZoomStep::Out => Some((self.index() + 2).min(Self::ALL.len() - 1)),' }) }
 )
 
 function Get-Counterexample([string]$Log, [string]$Invariant) {

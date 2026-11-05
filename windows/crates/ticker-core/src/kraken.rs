@@ -9,6 +9,9 @@ use crate::time::Timestamp;
 
 pub const TICKER_URL: &str = "https://api.kraken.com/0/public/Ticker?pair=XBTUSD";
 pub const CANDLES_TIMEOUT: Duration = Duration::from_secs(10);
+/// Kraken's OHLC endpoint answers with 721 rows, the newest still forming. Keeping 720 lets the chart zoom out with no
+/// extra request.
+pub const MAX_CANDLES: usize = 720;
 
 pub fn ohlc_url(timeframe: Timeframe) -> String {
     format!("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval={}", timeframe.spec().kraken_interval_minutes)
@@ -58,8 +61,8 @@ pub fn quote_from(outcome: &HttpOutcome, fetched_at: Timestamp) -> Result<Quote,
     parse_quote(ok_body(outcome)?, fetched_at).map_err(FetchFailure::Rejected)
 }
 
-pub fn candles_from(outcome: &HttpOutcome, timeframe: Timeframe) -> Result<Vec<Candle>, FetchFailure> {
-    parse_candles(ok_body(outcome)?, timeframe).map_err(FetchFailure::Rejected)
+pub fn candles_from(outcome: &HttpOutcome) -> Result<Vec<Candle>, FetchFailure> {
+    parse_candles(ok_body(outcome)?).map_err(FetchFailure::Rejected)
 }
 
 fn ok_body(outcome: &HttpOutcome) -> Result<&[u8], FetchFailure> {
@@ -81,8 +84,8 @@ pub fn parse_quote(body: &[u8], fetched_at: Timestamp) -> Result<Quote, KrakenEr
     Ok(Quote { price: price(Some(last), "c[0]")?, open_24h: price(ticker.and_then(|t| t.get("o")), "o")?, fetched_at })
 }
 
-/// Oldest first, trimmed to the timeframe's `candles_kept`. One bad row rejects the response.
-pub fn parse_candles(body: &[u8], timeframe: Timeframe) -> Result<Vec<Candle>, KrakenError> {
+/// Oldest first, the newest `MAX_CANDLES`. One bad row rejects the response.
+pub fn parse_candles(body: &[u8]) -> Result<Vec<Candle>, KrakenError> {
     let entry = pair_entry(body)?;
     let rows = entry.as_array().ok_or_else(|| malformed("OHLC result is not an array"))?;
     let mut candles = Vec::with_capacity(rows.len());
@@ -102,8 +105,7 @@ pub fn parse_candles(body: &[u8], timeframe: Timeframe) -> Result<Vec<Candle>, K
         }
         candles.push(candle);
     }
-    let kept = timeframe.spec().candles_kept;
-    Ok(candles.split_off(candles.len().saturating_sub(kept)))
+    Ok(candles.split_off(candles.len().saturating_sub(MAX_CANDLES)))
 }
 
 fn pair_entry(body: &[u8]) -> Result<Value, KrakenError> {
