@@ -3,12 +3,14 @@ import SwiftUI
 import TickerCore
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     private var model: AppModel!
     private var overlay: OverlayController!
     private var statusItem: NSStatusItem!
     private let lockItem = NSMenuItem(title: "Lock Position", action: #selector(toggleLock), keyEquivalent: "")
     private var settingsWindow: NSWindow?
+    /// The app that was frontmost when Settings opened, usually the game, which gets focus back when Settings closes.
+    private var returnTo: NSRunningApplication?
     private var tasks: [Task<Void, Never>] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -80,12 +82,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let window = NSWindow(contentViewController: NSHostingController(rootView: SettingsView(model: model)))
             window.title = "BTC Ticker Settings"
             window.styleMask = [.titled, .closable]
+            window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
             window.isReleasedWhenClosed = false
+            window.delegate = self
             window.center()
             settingsWindow = window
         }
+        if let frontmost = NSWorkspace.shared.frontmostApplication, frontmost != .current { returnTo = frontmost }
         NSApp.activate()
         settingsWindow?.makeKeyAndOrderFront(nil)
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let previous = returnTo, !previous.isTerminated else {
+            NSApp.deactivate()
+            return
+        }
+        returnTo = nil
+        NSApp.yieldActivation(to: previous)
+        previous.activate(from: .current)
     }
 }
 
