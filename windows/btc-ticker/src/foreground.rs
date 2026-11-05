@@ -12,8 +12,10 @@ use crate::win;
 
 /// Out of context, the hook runs on this thread's message loop, 0 to 47 ms after the switch as measured on this PC.
 pub fn watch() -> HWINEVENTHOOK {
-    unsafe extern "system" fn changed(_: HWINEVENTHOOK, _: u32, hwnd: HWND, _: i32, _: i32, _: u32, _: u32) {
-        deliver(Event::Foreground(classify(hwnd)));
+    // Windows sends this event even for a SetForegroundWindow it refuses, naming the window that asked, so the event's
+    // window is only a hint that the foreground may have moved. Measured on windows-latest: 11 of 11 refusals.
+    unsafe extern "system" fn changed(_: HWINEVENTHOOK, _: u32, _: HWND, _: i32, _: i32, _: u32, _: u32) {
+        deliver(Event::Foreground(current()));
     }
     // SAFETY: the callback is a plain function that lives for the whole process.
     unsafe {

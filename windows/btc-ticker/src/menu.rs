@@ -16,8 +16,9 @@ use windows::Win32::UI::HiDpi::{GetDpiForWindow, SystemParametersInfoForDpi};
 use windows::Win32::UI::Input::KeyboardAndMouse::{TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, GWLP_USERDATA, GetClientRect, GetWindowLongPtrW,
-    GetWindowRect, HHOOK, MA_NOACTIVATE, MSLLHOOKSTRUCT, NONCLIENTMETRICSW, PostMessageW, SPI_GETNONCLIENTMETRICS,
-    SW_SHOWNOACTIVATE, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowLongPtrW, SetWindowsHookExW, ShowWindow,
+    GetWindowRect, HHOOK, HWND_TOPMOST, MA_NOACTIVATE, MSLLHOOKSTRUCT, NONCLIENTMETRICSW, PostMessageW,
+    SPI_GETNONCLIENTMETRICS, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowLongPtrW, SetWindowPos, SetWindowsHookExW, ShowWindow,
     UnhookWindowsHookEx, WH_MOUSE_LL, WM_CLOSE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONDOWN, WM_MOUSEACTIVATE,
     WM_MOUSEMOVE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONDOWN, WS_BORDER, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
     WS_POPUP,
@@ -104,6 +105,16 @@ impl Popup {
             };
             Ok(Popup { hwnd, hook })
         }
+    }
+}
+
+impl Popup {
+    /// Keeps the menu over the overlay it opened from, after the overlay is raised.
+    pub fn raise(&self) {
+        // SAFETY: reorders this thread's own window without activating it.
+        let _ = unsafe {
+            SetWindowPos(self.hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+        };
     }
 }
 

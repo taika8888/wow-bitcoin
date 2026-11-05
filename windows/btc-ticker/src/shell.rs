@@ -166,10 +166,13 @@ impl Shell {
                 if frontmost == Frontmost::Ticker && self.app.overlay().frontmost() != Frontmost::Ticker {
                     self.probe.activations += 1;
                 }
-                self.overlay.raise();
+                self.keep_on_top();
                 self.handle(Input::Overlay(OverlayEvent::AppActivated(frontmost)));
             }
-            Event::Tick => self.handle(Input::Tick(win::now())),
+            Event::Tick => {
+                self.keep_on_top();
+                self.handle(Input::Tick(win::now()));
+            }
             Event::Woke => self.handle(Input::Woke(win::now())),
             Event::Fetched => {
                 let finished: Vec<_> = self.net.finished().collect();
@@ -214,6 +217,14 @@ impl Shell {
             Event::SettingsClosed => self.settings_window = None,
         }
         self.write_snapshot();
+    }
+
+    /// Another always-on-top window that raises itself sends no foreground event, so the heartbeat re-raises too.
+    fn keep_on_top(&self) {
+        self.overlay.raise();
+        if let Some(popup) = &self.popup {
+            popup.raise();
+        }
     }
 
     fn pointer(&mut self, pointer: Pointer) {
