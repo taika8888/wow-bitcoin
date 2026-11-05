@@ -117,6 +117,13 @@ private let quote = Quote(price: 80482.4, open24h: 80442, fetchedAt: fetchedAt)
         #expect(Settings.decode(json: #"{"timeframe":"1w","fontSize":20}"#).fontSize == 20)
     }
 
+    @Test func lastZoomLoadsAndAnUnknownOrMissingOneIsTheStandardView() {
+        #expect(Settings.decode(json: #"{"zoom":5}"#).zoom == .all)
+        #expect(Settings.decode(json: #"{"zoom":9,"fontSize":20}"#).zoom == .standard)
+        #expect(Settings.decode(json: #"{"zoom":"all"}"#).zoom == .standard)
+        #expect(Settings.decode(json: #"{"timeframe":"h4"}"#).zoom == .standard)
+    }
+
     @Test func defaultsMatchTheProductSpec() {
         let settings = Settings()
         #expect(settings.refreshSeconds == 5)
@@ -124,6 +131,7 @@ private let quote = Quote(price: 80482.4, open24h: 80442, fetchedAt: fetchedAt)
         #expect(settings.locked == false)
         #expect(settings.position == nil)
         #expect(settings.timeframe == .m15)
+        #expect(settings.zoom == .standard)
     }
 
     @Test func roundTrips() {
@@ -132,6 +140,7 @@ private let quote = Quote(price: 80482.4, open24h: 80442, fetchedAt: fetchedAt)
         settings.downColor = RGBA(red: 0.9, green: 0.1, blue: 0.2, alpha: 0.8)
         settings.onlyWhenWoWActive = true
         settings.timeframe = .m1
+        settings.zoom = .quarter
         settings.chartWidth = 500
         settings.chartHeight = 300
         #expect(Settings.decode(json: settings.json) == settings)

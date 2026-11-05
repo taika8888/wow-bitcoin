@@ -11,6 +11,8 @@ public enum KrakenError: Error, Hashable, Sendable {
 
 /// The only place that knows Kraken's wire format. Everything past these functions trusts the domain types.
 public enum Kraken {
+    /// Kraken's OHLC endpoint answers with 721 rows, the newest still forming. Keeping 720 lets the chart zoom out with no extra request.
+    public static let maxCandles = 720
     public static let tickerURL = URL(string: "https://api.kraken.com/0/public/Ticker?pair=XBTUSD")!
 
     public static func ohlcURL(_ timeframe: Timeframe) -> URL {
@@ -28,8 +30,8 @@ public enum Kraken {
         )
     }
 
-    /// Oldest first, trimmed to the timeframe's `candlesKept`. One bad row rejects the response.
-    public static func parseCandles(_ data: Data, timeframe: Timeframe) throws(KrakenError) -> [Candle] {
+    /// Oldest first, the newest `maxCandles`. One bad row rejects the response.
+    public static func parseCandles(_ data: Data) throws(KrakenError) -> [Candle] {
         guard let rows = try pairEntry(data) as? [Any] else { throw .malformed("OHLC result is not an array") }
         var candles: [Candle] = []
         candles.reserveCapacity(rows.count)
@@ -49,7 +51,7 @@ public enum Kraken {
             }
             candles.append(candle)
         }
-        return Array(candles.suffix(timeframe.spec.candlesKept))
+        return Array(candles.suffix(maxCandles))
     }
 
     private static func pairEntry(_ data: Data) throws(KrakenError) -> Any {

@@ -82,7 +82,7 @@ final class OverlayController {
         var frame = ticker
         if case .expanded(let timeframe) = overlay.mode {
             load = model.charts[timeframe]
-            chart = load?.series.flatMap { CandleChart(candles: $0.candles, timeframe: timeframe) }
+            chart = load?.series.flatMap { CandleChart(candles: $0.candles, timeframe: timeframe, zoom: settings.zoom) }
             let screen = TickerPlacement.screen(for: ticker, in: screens) ?? screens.first
             let layout = ExpandedLayout(
                 tickerFrame: ticker,

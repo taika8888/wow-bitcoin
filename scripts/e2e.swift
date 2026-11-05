@@ -19,7 +19,7 @@ let livePattern = #"^BTC \$\d{1,3}(,\d{3})*  [+-]?\d+\.\d{2}%$"#
 let editedPattern = #"^\$\d{1,3}(,\d{3})*\.\d{2}  [+-]?\d+\.\d{2}%$"#
 let syntheticClick = Notification.Name("dev.local.btcticker.e2e.click")
 let syntheticActivation = Notification.Name("dev.local.btcticker.e2e.activated")
-let candlesKept = ["1m": 120, "15m": 96, "4h": 90]
+let candlesShown = ["1m": 120, "15m": 96, "4h": 90]
 let captureDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("build")
 let workDir = FileManager.default.temporaryDirectory.appendingPathComponent("btcticker-e2e-\(getpid())")
 let stateURL = workDir.appendingPathComponent("state.json")
@@ -396,7 +396,7 @@ func missedHits(_ snapshot: Snapshot) -> [CGPoint] {
 }
 
 func charted(_ timeframe: String) -> (Snapshot) -> Bool {
-    { $0.mode == "expanded" && $0.timeframe == timeframe && $0.chart == "loaded" && $0.candles == candlesKept[timeframe] }
+    { $0.mode == "expanded" && $0.timeframe == timeframe && $0.chart == "loaded" && $0.candles == candlesShown[timeframe] }
 }
 
 func describeChart(_ snapshot: Snapshot?) -> String {
@@ -462,10 +462,10 @@ if let collapsed, let tickerHome {
     for timeframe in ["15m", "1m"] {
         let shown = click(timeframe, expecting: charted(timeframe))
         if let shown {
-            report("PASS", "timeframe-\(timeframe)", "clicked the \(timeframe) control: \(describeChart(shown)), expected \(candlesKept[timeframe]!)")
+            report("PASS", "timeframe-\(timeframe)", "clicked the \(timeframe) control: \(describeChart(shown)), expected \(candlesShown[timeframe]!)")
             capture(shown, timeframe)
         } else {
-            report("FAIL", "timeframe-\(timeframe)", "after clicking \(timeframe): \(describeChart(Snapshot.read())), expected \(candlesKept[timeframe]!) loaded candles")
+            report("FAIL", "timeframe-\(timeframe)", "after clicking \(timeframe): \(describeChart(Snapshot.read())), expected \(candlesShown[timeframe]!) loaded candles")
         }
     }
 

@@ -20,14 +20,14 @@ private let recorded: [(file: String, timeframe: Timeframe, low: Double, high: D
     @Test(arguments: recorded.indices)
     func recordedCandlesFitThePaddedDomain(index: Int) throws {
         let fixtureCase = recorded[index]
-        let candles = try Kraken.parseCandles(try fixture(fixtureCase.file), timeframe: fixtureCase.timeframe)
-        let chart = try #require(CandleChart(candles: candles, timeframe: fixtureCase.timeframe))
+        let candles = try Kraken.parseCandles(try fixture(fixtureCase.file))
+        let chart = try #require(CandleChart(candles: candles, timeframe: fixtureCase.timeframe, zoom: .standard))
         let range = fixtureCase.high - fixtureCase.low
         let below = (fixtureCase.low - chart.priceDomain.lowerBound) / range
         let above = (chart.priceDomain.upperBound - fixtureCase.high) / range
         #expect((0.05...0.1).contains(below), "margin under the lowest wick is \(below) of the range")
         #expect((0.05...0.1).contains(above), "margin over the highest wick is \(above) of the range")
-        #expect(chart.bars.count == fixtureCase.timeframe.spec.candlesKept)
+        #expect(chart.bars.count == fixtureCase.timeframe.spec.candlesShown)
         #expect(chart.bars.filter { $0.tone == .up }.count == fixtureCase.up)
         #expect(chart.bars.filter { $0.tone == .down }.count == fixtureCase.down)
         #expect(chart.lastPrice == 80489.7)
@@ -38,7 +38,7 @@ private let recorded: [(file: String, timeframe: Timeframe, low: Double, high: D
     }
 
     @Test func toneFollowsCloseAgainstOpen() throws {
-        let chart = try #require(CandleChart(candles: [candle(10, 11, at: 0), candle(11, 10, at: 1), candle(10, 10, at: 2)], timeframe: .m1))
+        let chart = try #require(CandleChart(candles: [candle(10, 11, at: 0), candle(11, 10, at: 1), candle(10, 10, at: 2)], timeframe: .m1, zoom: .standard))
         #expect(chart.bars.map(\.tone) == [.up, .down, .neutral])
         #expect(chart.bars[0].bodyLow == 10 && chart.bars[0].bodyHigh == 11)
         #expect(chart.bars[1].bodyLow == 10 && chart.bars[1].bodyHigh == 11)
@@ -46,26 +46,51 @@ private let recorded: [(file: String, timeframe: Timeframe, low: Double, high: D
     }
 
     @Test func aFlatCandleStillHasAVisibleBody() throws {
-        let chart = try #require(CandleChart(candles: [candle(100, 100, high: 120, low: 80)], timeframe: .m1))
+        let chart = try #require(CandleChart(candles: [candle(100, 100, high: 120, low: 80)], timeframe: .m1, zoom: .standard))
         let bar = chart.bars[0]
         #expect(bar.bodyHigh > bar.bodyLow)
         #expect(bar.bodyLow < 100 && bar.bodyHigh > 100)
     }
 
     @Test func aSeriesWithNoRangeStillHasADomain() throws {
-        let chart = try #require(CandleChart(candles: [candle(80000, 80000), candle(80000, 80000, at: 1)], timeframe: .m1))
+        let chart = try #require(CandleChart(candles: [candle(80000, 80000), candle(80000, 80000, at: 1)], timeframe: .m1, zoom: .standard))
         #expect(chart.priceDomain.lowerBound < 80000 && chart.priceDomain.upperBound > 80000)
     }
 
     @Test func barsSitMidIntervalAndTheTimeDomainCoversTheLastInterval() throws {
         let candles = [candle(1, 2, at: 0), candle(2, 3, at: 15)]
-        let chart = try #require(CandleChart(candles: candles, timeframe: .m15))
+        let chart = try #require(CandleChart(candles: candles, timeframe: .m15, zoom: .standard))
         #expect(chart.bars.map(\.time) == [t0.addingTimeInterval(450), t0.addingTimeInterval(15 * 60 + 450)])
         #expect(chart.timeDomain == t0...t0.addingTimeInterval(30 * 60))
     }
 
     @Test func noCandlesNoChart() {
-        #expect(CandleChart(candles: [], timeframe: .h4) == nil)
+        #expect(CandleChart(candles: [], timeframe: .h4, zoom: .standard) == nil)
+    }
+}
+
+@Suite struct ZoomTests {
+    @Test(arguments: [
+        (Timeframe.m1, [30, 60, 120, 240, 480, 720]),
+        (.m15, [24, 48, 96, 192, 384, 720]),
+        (.h4, [22, 45, 90, 180, 360, 720]),
+    ])
+    func eachRungShowsAMultipleOfTheStandardViewOrEveryCandle(timeframe: Timeframe, counts: [Int]) {
+        #expect(Zoom.allCases.map { $0.visibleCount(timeframe, available: 720) } == counts)
+    }
+
+    @Test func noRungShowsMoreCandlesThanThereAreOrNoneWhenThereAreSome() {
+        #expect(Zoom.allCases.map { $0.visibleCount(.m1, available: 100) } == [30, 60, 100, 100, 100, 100])
+        #expect(Zoom.allCases.map { $0.visibleCount(.h4, available: 1) } == [1, 1, 1, 1, 1, 1])
+        #expect(Zoom.allCases.map { $0.visibleCount(.m15, available: 0) } == [0, 0, 0, 0, 0, 0])
+    }
+
+    @Test func steppingWalksTheLadderAndStopsAtItsEnds() {
+        let outward = Array(sequence(first: Zoom.quarter) { $0 == .all ? nil : $0.stepped(.out) })
+        #expect(outward == [.quarter, .half, .standard, .double, .quadruple, .all])
+        #expect(Array(sequence(first: Zoom.all) { $0 == .quarter ? nil : $0.stepped(.in) }) == outward.reversed())
+        #expect(Zoom.quarter.stepped(.in) == .quarter)
+        #expect(Zoom.all.stepped(.out) == .all)
     }
 }
 

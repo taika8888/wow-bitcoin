@@ -132,7 +132,9 @@ public struct CandleChart: Hashable, Sendable {
     public let timeDomain: ClosedRange<Date>
     public let lastPrice: Double
 
-    public init?(candles: [Candle], timeframe: Timeframe) {
+    /// Shows the newest candles the zoom asks for, with the price domain fitted to those alone.
+    public init?(candles all: [Candle], timeframe: Timeframe, zoom: Zoom) {
+        let candles = all.suffix(zoom.visibleCount(timeframe, available: all.count))
         guard let first = candles.first, let last = candles.last else { return nil }
         let low = candles.map(\.low).min()!
         let high = candles.map(\.high).max()!

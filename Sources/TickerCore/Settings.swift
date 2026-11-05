@@ -52,6 +52,7 @@ public struct Settings: Codable, Hashable, Sendable {
     public var position: ScreenPoint?
     /// The timeframe the chart opens on, which is the one last chosen.
     public var timeframe = Timeframe.m15
+    public var zoom = Zoom.standard
     public var chartWidth: Double = 360
     public var chartHeight: Double = 180
 
@@ -77,6 +78,7 @@ public struct Settings: Codable, Hashable, Sendable {
         onlyWhenWoWActive = value(.onlyWhenWoWActive, defaults.onlyWhenWoWActive)
         position = value(.position, defaults.position)
         timeframe = value(.timeframe, defaults.timeframe)
+        zoom = value(.zoom, defaults.zoom)
         chartWidth = value(.chartWidth, defaults.chartWidth).clamped(to: Self.chartWidthRange)
         chartHeight = value(.chartHeight, defaults.chartHeight).clamped(to: Self.chartHeightRange)
     }
