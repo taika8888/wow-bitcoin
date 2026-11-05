@@ -46,10 +46,14 @@ pub struct Ticker {
 }
 
 impl Ticker {
-    pub fn launch(exe: &Path, work: &Path, seed: &Value, input_tag: usize) -> std::io::Result<Ticker> {
-        let (state, settings) = (work.join("state.json"), work.join("settings.json"));
-        let child = Command::new(exe)
-            .env("BTCTICKER_SETTINGS", seed.to_string())
+    /// The settings file sits in a folder of its own that does not exist yet, as on a fresh install.
+    pub fn launch(exe: &Path, work: &Path, seed: Option<&Value>, input_tag: usize) -> std::io::Result<Ticker> {
+        let (state, settings) = (work.join("state.json"), work.join("BTCTicker").join("settings.json"));
+        let mut command = Command::new(exe);
+        if let Some(seed) = seed {
+            command.env("BTCTICKER_SETTINGS", seed.to_string());
+        }
+        let child = command
             .env("BTCTICKER_SETTINGS_FILE", &settings)
             .env("BTCTICKER_STATE_FILE", &state)
             .env("BTCTICKER_INPUT_TAG", input_tag.to_string())

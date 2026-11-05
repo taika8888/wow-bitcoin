@@ -57,7 +57,12 @@ impl SettingsStore {
 
     /// Posts `message` to `notify` whenever anything in the settings file's folder changes.
     pub fn watch(&self, notify: HWND, message: u32) {
-        let Some(folder) = self.path.parent().map(|folder| wide(&folder.to_string_lossy())) else { return };
+        let Some(folder) = self.path.parent() else { return };
+        // A fresh install has no folder yet, and a folder that does not exist cannot be watched.
+        if let Err(error) = std::fs::create_dir_all(folder) {
+            eprintln!("could not create {}: {error}", folder.display());
+        }
+        let folder = wide(&folder.to_string_lossy());
         let notify = notify.0 as isize;
         std::thread::spawn(move || {
             // SAFETY: the folder name outlives the call, and the handle is used only on this thread.

@@ -139,6 +139,9 @@ fn run(report: &mut Report, app: &Path, shots: &Path, pid_file: Option<PathBuf>)
     let user_settings = std::env::var("APPDATA").map(|appdata| PathBuf::from(appdata).join(r"BTCTicker\settings.json"));
     let user_settings_before = user_settings.as_ref().ok().map(std::fs::read);
 
+    let tag = 0x4254_4345 ^ std::process::id() as usize;
+    fresh_install(report, app, &work.join("fresh-install"), tag, pid_file.as_deref());
+
     let (monitor, work_area) = desktop::primary_monitor();
     let game_exe = work.join("Wow.exe");
     let this = std::env::current_exe().unwrap_or_default();
@@ -158,9 +161,8 @@ fn run(report: &mut Report, app: &Path, shots: &Path, pid_file: Option<PathBuf>)
         return;
     }
 
-    let tag = 0x4254_4345 ^ std::process::id() as usize;
     let seed = settings(json!({ "locked": false, "refreshSeconds": 300 }));
-    let ticker = match Ticker::launch(app, &work, &seed, tag) {
+    let ticker = match Ticker::launch(app, &work, Some(&seed), tag) {
         Ok(ticker) => ticker,
         Err(error) => return report.line("FAIL", "launch", format!("could not start {}: {error}", app.display())),
     };
@@ -305,6 +307,26 @@ fn window(report: &mut Report, session: &Session, monitor: &Rect) {
         icon.map_or("no notification-area icon registered for the app's main window".to_string(), |icon| {
             format!("registered; Windows shows it, or the overflow chevron holding it, at {icon}")
         }),
+    );
+}
+
+/// Starts the app with no settings and no settings folder, then edits the file it should be watching.
+fn fresh_install(report: &mut Report, app: &Path, work: &Path, tag: usize, pid_file: Option<&Path>) {
+    let _ = std::fs::create_dir_all(work);
+    let ticker = match Ticker::launch(app, work, None, tag) {
+        Ok(ticker) => ticker,
+        Err(error) => return report.line("FAIL", "fresh-install", format!("could not start {}: {error}", app.display())),
+    };
+    if let Some(pid_file) = pid_file {
+        let _ = std::fs::write(pid_file, ticker.pid.to_string());
+    }
+    let started = ticker.wait_for(10.0, |snapshot| !snapshot.locked).is_some();
+    ticker.write_settings(&json!({ "locked": true }));
+    let picked_up = started && ticker.wait_for(5.0, |snapshot| snapshot.locked).is_some();
+    report.check(
+        picked_up,
+        "fresh-install",
+        format!("started with no settings folder {started}; a settings file written afterwards applied {picked_up}"),
     );
 }
 
