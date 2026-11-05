@@ -25,8 +25,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GA_ROOT, GW_HWNDNEXT, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow,
     GetSystemMetrics, GetTopWindow, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
-    IsWindowVisible, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN, SetCursorPos,
-    SetForegroundWindow, WindowFromPoint,
+    HWND_NOTOPMOST, HWND_TOPMOST, IsWindowVisible, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+    SM_YVIRTUALSCREEN, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetCursorPos, SetForegroundWindow, SetWindowPos,
+    WindowFromPoint,
 };
 use windows::core::BOOL;
 
@@ -153,6 +154,21 @@ pub fn z_order() -> Vec<HWND> {
         }
     }
     windows
+}
+
+/// Whether `above` sits higher than `below` in the z-order. None when either is not a visible top-level window.
+pub fn is_above(above: HWND, below: HWND) -> Option<bool> {
+    let order = z_order();
+    let position = |window: HWND| order.iter().position(|candidate| *candidate == window);
+    Some(position(above)? < position(below)?)
+}
+
+/// Puts `window` at the top of the topmost band, or at the top of the normal band, without activating it. Another
+/// process's window can be moved this way, which is how an always-on-top rival rises over the overlay.
+pub fn set_topmost(window: HWND, topmost: bool) -> bool {
+    let after = if topmost { HWND_TOPMOST } else { HWND_NOTOPMOST };
+    // SAFETY: reorders a window without moving, sizing or activating it.
+    unsafe { SetWindowPos(window, Some(after), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) }.is_ok()
 }
 
 /// Visible top-level windows of `pid` with window class `class`.
