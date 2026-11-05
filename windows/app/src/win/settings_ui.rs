@@ -564,9 +564,21 @@ fn set_controls(hwnd: HWND, settings: &Settings) {
 fn edited(hwnd: HWND, control: HWND, control_id: i32) {
     let offset = control_id - ID_BASE;
     let (row, part) = (offset / PARTS, offset % PARTS);
-    let (Some(field), Some(current), true) =
-        (FORM.get(row as usize), current_settings(), offset >= 0)
-    else {
+    let Some(field) = FORM.get(row as usize).filter(|_| offset >= 0) else {
+        return;
+    };
+    let picked = match (&field.kind, part) {
+        (FieldKind::Color { get, .. }, MAIN) => {
+            let chosen = current_settings().and_then(|settings| choose_color(hwnd, get(&settings)));
+            if chosen.is_none() {
+                return;
+            }
+            chosen
+        }
+        _ => None,
+    };
+    // Read after the modal color dialog: its message loop keeps dispatching drags, the lock and store changes.
+    let Some(current) = current_settings() else {
         return;
     };
     let mut next = current.clone();
@@ -594,10 +606,10 @@ fn edited(hwnd: HWND, control: HWND, control_id: i32) {
             &mut next,
             send(control, BM_GETCHECK, 0, 0) == BST_CHECKED.0 as isize,
         ),
-        (FieldKind::Color { get, set }, MAIN) => match choose_color(hwnd, get(&current)) {
-            Some(color) => set(&mut next, color),
-            None => return,
-        },
+        (FieldKind::Color { get, set }, MAIN) => {
+            let Some(rgb) = picked else { return };
+            set(&mut next, rgb.with_alpha(get(&current).alpha));
+        }
         (FieldKind::Color { get, set }, SECOND) => {
             let alpha = send(control, TBM_GETPOS, 0, 0) as f64 / 100.0;
             set(&mut next, get(&current).with_alpha(alpha));
@@ -613,7 +625,7 @@ fn colorref(color: Rgba) -> COLORREF {
     COLORREF(byte(color.red) | byte(color.green) << 8 | byte(color.blue) << 16)
 }
 
-/// ChooseColor has no alpha, so the color's own alpha is kept; the slider beside the swatch edits it.
+/// ChooseColor has no alpha, so only red, green and blue come back; the slider beside the swatch edits alpha.
 fn choose_color(hwnd: HWND, current: Rgba) -> Option<Rgba> {
     let mut custom = CUSTOM_COLORS.get();
     let mut dialog = CHOOSECOLORW {
@@ -634,7 +646,7 @@ fn choose_color(hwnd: HWND, current: Rgba) -> Option<Rgba> {
         red: unit(0),
         green: unit(8),
         blue: unit(16),
-        alpha: current.alpha,
+        alpha: 1.0,
     })
 }
 
