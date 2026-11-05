@@ -91,7 +91,9 @@ Out of scope, so a pass says nothing about:
 - refresh values other than 2, 5 and 30 s, and paths longer than the depth bound;
 - clocks that go backwards (`advance` clamps them, unchecked here);
 - layout, placement, display formatting, `Settings::decode`, `Snapshot`, and `CandleChart` geometry, including which candles a zoom shows and how they merge into the bar budget (`tests/core/` covers these);
-- everything the Win32 shell does, including how wheel deltas add up to zoom steps (the end-to-end check covers that).
+- everything either native shell does, including how wheel deltas add up to zoom steps (the end-to-end checks cover that).
+
+The macOS app now uses this same core through `ticker-ffi`. Axis tick and settings-decoder parity are covered in `tests/core/`, with deliberate mutations in `scripts/mutants-mac-core.py` (run from the repository root). Swift tests cover the C boundary and Mac layout; the former Swift reducer and feed tests have been replaced by these shared-core checks.
 
 The App checker computes "a quote is due" with the code's own `FeedSchedule::delay`, and "candles are due" with the code's `Timeframe::spec().refresh_seconds`. So it checks that the schedule is honored, not the backoff numbers themselves. `tests/core/app.rs` pins those numbers.
 

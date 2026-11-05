@@ -16,8 +16,8 @@ final class CandleChartView: PaintedView {
     override func draw(_ dirtyRect: NSRect) {
         let text = NSColor(settings.textColor)
         guard let chart else {
-            guard case .placeholder(let message) = notice else { return }
-            let label = NSAttributedString(string: message, attributes: [.font: Self.labelFont, .foregroundColor: text.withAlphaComponent(text.alphaComponent * 0.6)])
+            guard let notice, notice.kind == .placeholder else { return }
+            let label = NSAttributedString(string: notice.text, attributes: [.font: Self.labelFont, .foregroundColor: text.withAlphaComponent(text.alphaComponent * 0.6)])
             let size = label.size()
             label.draw(at: NSPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2))
             return
@@ -36,8 +36,7 @@ final class CandleChartView: PaintedView {
 
         let grid = NSBezierPath()
         grid.lineWidth = 1
-        let utcOffset = TimeZone.current.secondsFromGMT(for: chart.timeDomain.lowerBound)
-        let timeTicks = chart.timeTicks(utcOffset: utcOffset)
+        let timeTicks = chart.timeTicks
         if timeTicks.count > 1 {
             Self.timeLabel.setLocalizedDateFormatFromTemplate(timeTicks[1].timeIntervalSince(timeTicks[0]) < 86400 ? "jmm" : "MMMd")
         }
@@ -53,10 +52,10 @@ final class CandleChartView: PaintedView {
             labelEnd = labelX + label.size().width
         }
         for tick in chart.priceTicks {
-            let tickY = y(tick).rounded() + 0.5
+            let tickY = y(tick.value).rounded() + 0.5
             grid.move(to: NSPoint(x: plot.minX, y: tickY))
             grid.line(to: NSPoint(x: plot.maxX, y: tickY))
-            let label = NSAttributedString(string: TickerDisplay.price(tick, decimals: 0), attributes: labelAttributes)
+            let label = NSAttributedString(string: tick.label, attributes: labelAttributes)
             label.draw(at: NSPoint(x: plot.maxX + 4, y: min(max(tickY - labelHeight / 2, 0), plot.maxY - labelHeight)))
         }
         text.withAlphaComponent(text.alphaComponent * 0.12).setStroke()
@@ -78,8 +77,8 @@ final class CandleChartView: PaintedView {
         text.withAlphaComponent(text.alphaComponent * 0.75).setStroke()
         last.stroke()
 
-        if case .stale(let marker) = notice {
-            let label = NSAttributedString(string: marker, attributes: [.font: Self.staleFont, .foregroundColor: NSColor(settings.downColor)])
+        if let notice, notice.kind == .stale {
+            let label = NSAttributedString(string: notice.text, attributes: [.font: Self.staleFont, .foregroundColor: NSColor(settings.downColor)])
             let size = label.size()
             let capsule = NSRect(x: 0, y: 0, width: ceil(size.width) + 10, height: ceil(size.height) + 2)
             NSColor.black.withAlphaComponent(0.6).setFill()

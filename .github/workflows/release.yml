@@ -59,6 +59,12 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # bundle.sh links the shared Rust core, built for both slices of the universal app.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
       # The app needs Swift 6.1 (README). The image's default Xcode is used as shipped, and this fails if it is older.
       - name: Swift toolchain
         run: |

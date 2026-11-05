@@ -13,6 +13,8 @@ on:
       - "Support/**"
       - "assets/**"
       - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/macos.yml"
   pull_request:
     paths:
@@ -24,6 +26,8 @@ on:
       - "Support/**"
       - "assets/**"
       - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/macos.yml"
   workflow_dispatch:
 
@@ -45,6 +49,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The app links the shared Rust core as a static library, which scripts/build-rust.sh builds.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+
       # The app needs Swift 6.1 (README). The image's default Xcode is used as shipped, and this fails if it is older.
       - name: Swift toolchain
         run: |
@@ -63,21 +72,21 @@ jobs:
 
       # Each check appends one verify.sh-style line to results.txt. Later checks run after an earlier one fails, as in
       # verify.sh, so one run reports all three.
-      - name: swift build (release, warnings as errors)
+      - name: build.sh, Rust core then swift build (release, warnings as errors)
         run: |
           mkdir -p "$LOGS"
-          if swift build -c release -Xswiftc -warnings-as-errors 2>&1 | tee "$LOGS/build.log"; then
+          if scripts/build.sh -c release -Xswiftc -warnings-as-errors 2>&1 | tee "$LOGS/build.log"; then
             printf '%-12s %s  (%s)\n' PASS build "release, warnings as errors" >> "$LOGS/results.txt"
           else
             printf '%-12s %s  (%s)\n' FAIL build "$LOGS/build.log" >> "$LOGS/results.txt"
             exit 1
           fi
 
-      - name: swift test
+      - name: test.sh, Rust core then swift test
         if: ${{ !cancelled() }}
         run: |
           mkdir -p "$LOGS"
-          if swift test 2>&1 | tee "$LOGS/test.log"; then
+          if scripts/test.sh 2>&1 | tee "$LOGS/test.log"; then
             passed=$(grep -Eo 'Test run with [0-9]+ tests?( in [0-9]+ suites?)? passed' "$LOGS/test.log" | tail -n 1)
             if [ -n "$passed" ]; then
               printf '%-12s %s  (%s)\n' PASS test "$passed" >> "$LOGS/results.txt"
