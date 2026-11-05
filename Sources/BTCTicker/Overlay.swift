@@ -183,7 +183,7 @@ final class OverlayController {
 }
 
 /// The reducer, not this view, decides whether a press is a drag or a click, what a click means, and what a zoom step changes.
-final class OverlayView: NSView {
+final class OverlayView: PaintedView {
     var onEvent: (OverlayEvent) -> Void = { _ in }
     var isDragging: () -> Bool = { false }
     private var text = NSAttributedString()

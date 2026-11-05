@@ -1,7 +1,7 @@
 import AppKit
 import TickerCore
 
-final class CandleChartView: NSView {
+final class CandleChartView: PaintedView {
     var chart: CandleChart?
     var notice: ChartNotice?
     var settings = TickerCore.Settings()
