@@ -9,6 +9,7 @@ final class AppModel {
     private(set) var charts = ChartFeed()
     @ObservationIgnored var onChange: () -> Void = {}
     @ObservationIgnored private var lastGood: Quote?
+    @ObservationIgnored private var schedule = FeedSchedule()
     @ObservationIgnored private let startedAt = Date()
     @ObservationIgnored private let store: SettingsStore
     @ObservationIgnored private let session = URLSession(configuration: .ephemeral)
@@ -31,21 +32,26 @@ final class AppModel {
 
     /// Sequential on purpose: the next request starts only after the previous one finished, so requests never overlap.
     func runFeed() async {
-        var failures = 0
         while !Task.isCancelled {
+            let refreshSeconds = overlay.settings.refreshSeconds
+            schedule.started(at: .now)
             do {
-                let request = URLRequest(url: Kraken.tickerURL, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+                let request = URLRequest(
+                    url: Kraken.tickerURL,
+                    cachePolicy: .reloadIgnoringLocalCacheData,
+                    timeoutInterval: FeedSchedule.requestTimeout(refreshSeconds: refreshSeconds)
+                )
                 let (data, response) = try await session.data(for: request)
                 guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
                 lastGood = try Kraken.parseQuote(data, fetchedAt: .now)
-                failures = 0
+                schedule.finished(ok: true)
             } catch {
-                failures += 1
-                FileHandle.standardError.write(Data("quote fetch failed (\(failures) in a row): \(error)\n".utf8))
+                schedule.finished(ok: false)
+                FileHandle.standardError.write(Data("quote fetch failed (\(schedule.failures) in a row): \(error)\n".utf8))
             }
             tick()
-            let delay = FeedStatus.nextFetchDelay(refreshSeconds: overlay.settings.refreshSeconds, consecutiveFailures: failures)
-            try? await Task.sleep(for: .seconds(delay))
+            let wait = schedule.nextStart(refreshSeconds: overlay.settings.refreshSeconds).timeIntervalSinceNow
+            if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
         }
     }
 

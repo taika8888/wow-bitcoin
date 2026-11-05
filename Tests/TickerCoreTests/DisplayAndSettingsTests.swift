@@ -155,9 +155,50 @@ private let quote = Quote(price: 80482.4, open24h: 80442, fetchedAt: fetchedAt)
         #expect(FeedStatus.derive(lastGood: quote, startedAt: start, now: start + 130, refreshInterval: 10) == .live(quote))
     }
 
-    @Test func backoffDoublesPerFailureAndCapsAtAMinute() {
-        #expect((0...4).map { FeedStatus.nextFetchDelay(refreshSeconds: 5, consecutiveFailures: $0) } == [5, 10, 20, 40, 60])
-        #expect(FeedStatus.nextFetchDelay(refreshSeconds: 5, consecutiveFailures: 50) == 60)
-        #expect(FeedStatus.nextFetchDelay(refreshSeconds: 120, consecutiveFailures: 1) == 120)
+    @Test func theFirstRetryKeepsTheCadenceThenBackoffDoublesAndCapsAtAMinute() {
+        #expect((0...5).map { FeedSchedule.delay(refreshSeconds: 5, failures: $0) } == [5, 5, 10, 20, 40, 60])
+        #expect(FeedSchedule.delay(refreshSeconds: 5, failures: 50) == 60)
+        #expect(FeedSchedule.delay(refreshSeconds: 120, failures: 3) == 120)
+    }
+
+    /// Runs the feed loop's rule (a request starts at `nextStart`, never before the previous one ended) through
+    /// good, failed, good, and samples the status every 100ms in between.
+    @Test(arguments: [2, 5, 30, 300], [0.2, -1])
+    func oneFailedRequestNeverShowsTheQuoteAsStale(refreshSeconds: Int, failureTakes: Double) {
+        let timeout = FeedSchedule.requestTimeout(refreshSeconds: refreshSeconds)
+        let durations = [0.05, failureTakes < 0 ? timeout : failureTakes, timeout - 0.05]
+        var schedule = FeedSchedule()
+        var clock = start
+        var fetched: [Date] = []
+        for (index, duration) in durations.enumerated() {
+            clock = max(clock, schedule.nextStart(refreshSeconds: refreshSeconds))
+            schedule.started(at: clock)
+            clock += duration
+            schedule.finished(ok: index != 1)
+            if index != 1 { fetched.append(clock) }
+        }
+        let quote = Quote(price: 1, open24h: 1, fetchedAt: fetched[0])
+        let stale = stride(from: fetched[0], through: fetched[1], by: 0.1).filter {
+            FeedStatus.derive(lastGood: quote, startedAt: start, now: $0, refreshInterval: TimeInterval(refreshSeconds)) != .live(quote)
+        }
+        #expect(stale.isEmpty, "stale from \(stale.first.map { $0.timeIntervalSince(fetched[0]) } ?? 0)s after the last good quote, the next landed after \(fetched[1].timeIntervalSince(fetched[0]))s")
+    }
+
+    @Test func wakingCutsTheBackoffShort() {
+        var schedule = FeedSchedule()
+        schedule.started(at: start)
+        for _ in 0..<4 { schedule.finished(ok: false) }
+        #expect(schedule.nextStart(refreshSeconds: 5) == start + 40)
+        schedule.woke()
+        #expect(schedule.nextStart(refreshSeconds: 5) == start + 5)
+    }
+
+    @Test func aNewRefreshIntervalAppliesToTheWaitAlreadyRunning() {
+        var schedule = FeedSchedule()
+        #expect(schedule.nextStart(refreshSeconds: 300) == .distantPast, "the first request starts at once")
+        schedule.started(at: start)
+        schedule.finished(ok: true)
+        #expect(schedule.nextStart(refreshSeconds: 300) == start + 300)
+        #expect(schedule.nextStart(refreshSeconds: 2) == start + 2)
     }
 }
