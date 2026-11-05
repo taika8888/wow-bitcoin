@@ -37,6 +37,8 @@ public struct Snapshot: Codable, Hashable, Sendable {
     public var activations: Int
     /// The main menu's shortcuts as "cmd-<key> <action>", so the check can see Close and Quit without typing.
     public var shortcuts: [String] = []
+    /// Presses on the overlay that did not come from the check's own synthesized clicks: someone clicked it mid-run.
+    public var foreignPresses = 0
 
     public init(
         display: TickerDisplay, status: FeedStatus, overlay: OverlayState, chart: CandleLoad?, candles: Int,

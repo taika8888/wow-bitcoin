@@ -28,6 +28,8 @@ final class OverlayPanel: NSPanel {
 final class OverlayController {
     /// Test-only route for clicks: a screen point, in CGWindowList coordinates, delivered as a synthesized NSEvent.
     static let syntheticClick = Notification.Name("dev.local.btcticker.e2e.click")
+    /// Test-only: re-posts NSWorkspace's app-activated notification inside the app for a pid, leaving the real frontmost app alone.
+    static let syntheticActivation = Notification.Name("dev.local.btcticker.e2e.activated")
 
     private let model: AppModel
     private let panel = OverlayPanel()
@@ -35,18 +37,29 @@ final class OverlayController {
     private let stateFile: URL?
     private var lastSnapshot: Data?
     private var activations = 0
+    private var synthesizing = false
+    private var foreignPresses = 0
 
     init(model: AppModel, menu: NSMenu, stateFile: URL?) {
         self.model = model
         self.stateFile = stateFile
         view.menu = menu
-        view.onEvent = { [weak model] in model?.send($0) }
+        view.onEvent = { [weak self, weak model] event in
+            if event == .pressed, self?.synthesizing == false { self?.foreignPresses += 1 }
+            model?.send(event)
+        }
         view.isDragging = { [weak model] in model?.overlay.drag == .dragging }
         panel.contentView = view
         if stateFile != nil {
             DistributedNotificationCenter.default().addObserver(forName: Self.syntheticClick, object: nil, queue: .main) { [weak self] note in
                 guard let x = note.userInfo?["x"] as? Double, let y = note.userInfo?["y"] as? Double else { return }
                 MainActor.assumeIsolated { self?.click(at: CGPoint(x: x, y: y)) }
+            }
+            DistributedNotificationCenter.default().addObserver(forName: Self.syntheticActivation, object: nil, queue: .main) { note in
+                guard let pid = note.userInfo?["pid"] as? Int, let app = NSRunningApplication(processIdentifier: pid_t(pid)) else { return }
+                NSWorkspace.shared.notificationCenter.post(
+                    name: NSWorkspace.didActivateApplicationNotification, object: NSWorkspace.shared, userInfo: [NSWorkspace.applicationUserInfoKey: app]
+                )
             }
             NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
@@ -99,7 +112,9 @@ final class OverlayController {
                 with: type, location: local, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
                 windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseDown ? 1 : 0
             ) else { continue }
+            synthesizing = true
             panel.sendEvent(event)
+            synthesizing = false
         }
     }
 
@@ -132,6 +147,7 @@ final class OverlayController {
             activations: activations
         )
         snapshot.shortcuts = Self.shortcuts(in: NSApp.mainMenu)
+        snapshot.foreignPresses = foreignPresses
         let data = snapshot.json
         guard data != lastSnapshot else { return }
         lastSnapshot = data

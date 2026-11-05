@@ -18,6 +18,7 @@ let wowBundleID = "com.blizzard.worldofwarcraft"
 let livePattern = #"^BTC \$\d{1,3}(,\d{3})*  [+-]?\d+\.\d{2}%$"#
 let editedPattern = #"^\$\d{1,3}(,\d{3})*\.\d{2}  [+-]?\d+\.\d{2}%$"#
 let syntheticClick = Notification.Name("dev.local.btcticker.e2e.click")
+let syntheticActivation = Notification.Name("dev.local.btcticker.e2e.activated")
 let candlesKept = ["1m": 120, "15m": 96, "4h": 90]
 let captureDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("build")
 let workDir = FileManager.default.temporaryDirectory.appendingPathComponent("btcticker-e2e-\(getpid())")
@@ -44,11 +45,13 @@ func run(_ tool: String, _ args: [String]) -> String {
 }
 
 /// Asks LaunchServices directly; NSWorkspace in a script without an app run loop can report a stale answer.
-func frontmostBundleID() -> String {
+func frontmost(_ key: String) -> String {
     let asn = run("/usr/bin/lsappinfo", ["front"])
-    let info = run("/usr/bin/lsappinfo", ["info", "-only", "bundleid", asn])
+    let info = run("/usr/bin/lsappinfo", ["info", "-only", key, asn])
     return info.split(separator: "=").last.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "\" ")) } ?? "unknown"
 }
+
+func frontmostBundleID() -> String { frontmost("bundleid") }
 
 func waitFor<T>(_ seconds: TimeInterval, _ probe: () -> T?) -> T? {
     let deadline = Date().addingTimeInterval(seconds)
@@ -80,6 +83,7 @@ struct Snapshot {
     let opacity: Double
     let fetchedAt: Double?
     let shortcuts: [String]
+    let foreignPresses: Int
 
     static func read() -> Snapshot? {
         guard let data = try? Data(contentsOf: stateURL),
@@ -101,7 +105,8 @@ struct Snapshot {
             activations: json["activations"] as? Int ?? -1,
             opacity: json["opacity"] as? Double ?? -1,
             fetchedAt: json["fetchedAt"] as? Double,
-            shortcuts: json["shortcuts"] as? [String] ?? []
+            shortcuts: json["shortcuts"] as? [String] ?? [],
+            foreignPresses: json["foreignPresses"] as? Int ?? -1
         )
     }
 }
@@ -161,6 +166,7 @@ func writeSettings(_ json: String) {
 try? FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
 run("/usr/bin/defaults", ["delete", suite])
 let frontBefore = frontmostBundleID()
+let tickerBundleID = Bundle(url: appURL)?.bundleIdentifier ?? "dev.local.btcticker"
 
 let app = Process()
 app.executableURL = appURL.appendingPathComponent("Contents/MacOS/BTCTicker")
@@ -259,19 +265,43 @@ if let edited, let before {
     report("FAIL", "settings-live", "snapshot did not reflect the edit within 5s; last: '\(last?.text ?? "none")' locked \(last?.locked ?? false) height \(Int(last?.frame.height ?? 0))")
 }
 
-let frontNow = frontmostBundleID()
-let shouldShow = frontNow == wowBundleID
-writeSettings(#"{"showLabel":false,"showChange":true,"decimals":2,"fontSize":30,"locked":true,"onlyWhenWoWActive":true}"#)
-let gated = waitFor(5) { () -> (Snapshot, Bool)? in
-    guard let snapshot = Snapshot.read(), snapshot.visible == shouldShow else { return nil }
-    let listed = onScreenWindows().contains { $0.number == snapshot.windowNumber }
-    return listed == shouldShow ? (snapshot, listed) : nil
+/// Posts NSWorkspace.didActivateApplicationNotification inside the app, the input its visibility rule observes,
+/// without changing which app is really frontmost.
+func announceActivation(of pid: pid_t) {
+    DistributedNotificationCenter.default().postNotificationName(syntheticActivation, object: nil, userInfo: ["pid": Int(pid)], deliverImmediately: true)
 }
-if let gated {
-    report("PASS", "only-when-wow", "frontmost \(frontNow): snapshot visible \(gated.0.visible), on-screen list \(gated.1 ? "has" : "lacks") the overlay")
+
+func shown(_ expected: Bool) -> String? {
+    waitFor(5) { () -> String? in
+        guard let snapshot = Snapshot.read(), snapshot.visible == expected else { return nil }
+        let listed = onScreenWindows().contains { $0.number == snapshot.windowNumber }
+        return listed == expected ? "visible \(expected) and \(listed ? "in" : "out of") the on-screen list" : nil
+    }
+}
+
+writeSettings(#"{"showLabel":false,"showChange":true,"decimals":2,"fontSize":30,"locked":true,"onlyWhenWoWActive":true}"#)
+let finder = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first
+let wowApp = NSRunningApplication.runningApplications(withBundleIdentifier: wowBundleID).first
+var gateSteps: [String] = []
+var gateOK = true
+if let finder, let wowApp {
+    for (app, expected) in [(finder, false), (wowApp, true)] {
+        announceActivation(of: app.processIdentifier)
+        let seen = shown(expected)
+        gateOK = gateOK && seen != nil
+        gateSteps.append("\(app.bundleIdentifier ?? "?") activated: \(seen ?? "still visible \(Snapshot.read()?.visible ?? !expected) after 5s")")
+    }
+}
+let realFront = frontmostBundleID()
+if let realPID = pid_t(frontmost("pid")) { announceActivation(of: realPID) }
+let realShows = realFront == wowBundleID || realFront == tickerBundleID
+let restored = shown(realShows)
+gateSteps.append("real frontmost \(realFront) re-announced: \(restored ?? "visible should be \(realShows), is \(Snapshot.read()?.visible ?? !realShows)")")
+let gateLabel = "only-when-wow (activation posted inside the app, real frontmost untouched)"
+if finder == nil || wowApp == nil {
+    report("INCONCLUSIVE", gateLabel, "need Finder and World of Warcraft running to announce both; \(gateSteps.joined(separator: "; "))")
 } else {
-    let last = Snapshot.read()
-    report("FAIL", "only-when-wow", "frontmost \(frontNow) so visible should be \(shouldShow); snapshot visible \(last?.visible ?? false)")
+    report(gateOK && restored != nil ? "PASS" : "FAIL", gateLabel, gateSteps.joined(separator: "; "))
 }
 
 if let area = NSScreen.screens.first?.visibleFrame {
@@ -295,12 +325,11 @@ enum ClickRoute: String {
     case postToPid = "CGEvent postToPid"
     case synthesized = "synthesized NSEvent, not HID"
 }
-var route: ClickRoute?
+var route: ClickRoute? = CGPreflightPostEventAccess() ? nil : .synthesized
 var clicks = 0
-var fronts: [(before: String, after: String)] = []
+var fronts: [(target: String, before: String, after: String, under: String)] = []
 var tickerSamples: [CGRect] = []
 var cursorOnTarget: [CGPoint] = []
-let tickerBundleID = Bundle(url: appURL)?.bundleIdentifier ?? "dev.local.btcticker"
 
 func postToPid(at point: CGPoint) {
     for type in [CGEventType.leftMouseDown, .leftMouseUp] {
@@ -315,7 +344,16 @@ func synthesize(at point: CGPoint) {
     )
 }
 
-/// Real input first; the synthesized route only once real input is shown not to arrive (no post-event access).
+/// The app a click would reach if it passed through the overlay: the owner of the next window down at that point.
+func owner(under point: CGPoint) -> String {
+    let windows = onScreenWindows()
+    guard let ours = windows.first(where: { $0.pid == app.processIdentifier && $0.bounds.contains(point) }),
+          let below = windows.first(where: { $0.index > ours.index && $0.bounds.contains(point) })
+    else { return "nothing" }
+    return NSRunningApplication(processIdentifier: below.pid)?.bundleIdentifier ?? "pid \(below.pid)"
+}
+
+/// Real input first when the process may post events; otherwise, or once real input is shown not to arrive, the synthesized route.
 func click(_ target: String, expecting done: @escaping (Snapshot) -> Bool) -> Snapshot? {
     guard let before = Snapshot.read(), let rect = before.targets[target] else { return nil }
     let point = CGPoint(x: rect.midX, y: rect.midY)
@@ -331,7 +369,8 @@ func click(_ target: String, expecting done: @escaping (Snapshot) -> Bool) -> Sn
         result = waitFor(10) { Snapshot.read().flatMap { done($0) ? $0 : nil } }
     }
     if result != nil { clicks += 1 }
-    fronts.append((frontBefore, frontmostBundleID()))
+    RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+    fronts.append((target, frontBefore, frontmostBundleID(), owner(under: point)))
     // A warped cursor would sit on the target; the user moving the mouse would not.
     if let cursor = CGEvent(source: nil)?.location, hypot(cursor.x - point.x, cursor.y - point.y) < 1 { cursorOnTarget.append(cursor) }
     if let ticker = Snapshot.read()?.targets["ticker"] { tickerSamples.append(ticker) }
@@ -462,7 +501,7 @@ if let collapsed, let tickerHome {
 
     let label = "click (\((route ?? .synthesized).rawValue))"
     if let route, clicks == fronts.count, cursorOnTarget.isEmpty {
-        let fallback = route == .synthesized ? "; postToPid did not reach the app (CGPreflightPostEventAccess \(CGPreflightPostEventAccess()))" : ""
+        let fallback = route == .synthesized ? "; real input unavailable (CGPreflightPostEventAccess \(CGPreflightPostEventAccess()))" : ""
         report("PASS", label, "\(clicks)/\(fronts.count) clicks changed the snapshot as expected; the cursor was never warped onto a target\(fallback)")
     } else {
         report("FAIL", label, "\(clicks)/\(fronts.count) clicks took effect; cursor found on a click target at \(cursorOnTarget)")
@@ -472,15 +511,31 @@ if let collapsed, let tickerHome {
 }
 
 let activations = Snapshot.read()?.activations ?? -1
-let samples = [frontBefore, frontAfterLaunch, frontAfterEdit] + fronts.flatMap { [$0.before, $0.after] }
-let switches = fronts.filter { $0.before != $0.after }.map { "\($0.before) -> \($0.after)" }
-    + (frontBefore == frontAfterLaunch && frontAfterLaunch == frontAfterEdit ? [] : ["\(frontBefore) -> \(frontAfterLaunch) -> \(frontAfterEdit) before the clicks"])
-if activations != 0 || samples.contains(tickerBundleID) {
-    report("FAIL", "focus-kept", "BTC Ticker became active \(activations) times; frontmost samples: \(samples.joined(separator: ", "))")
-} else if switches.isEmpty {
-    report("PASS", "focus-kept", "frontmost stayed \(frontBefore) through launch, settings edits and \(fronts.count) clicks; BTC Ticker never became active")
+let duringClicks = fronts.filter { $0.before != $0.after }.map { click in
+    let cause = click.after == click.under ? "the app under the click point, as a click passing through the overlay would" : "not the app under the click point (\(click.under))"
+    return "click on \(click.target): \(click.before) -> \(click.after), \(cause)\(click.before == wowBundleID ? "; WoW lost frontmost" : "")"
+}
+let timeline = [frontBefore, frontAfterLaunch, frontAfterEdit] + fronts.flatMap { [$0.before, $0.after] }
+let betweenClicks = zip(timeline, timeline.dropFirst()).enumerated()
+    .filter { index, pair in pair.0 != pair.1 && !(index >= 3 && (index - 3) % 2 == 0) }
+    .map { "\($0.1.0) -> \($0.1.1)" }
+if activations != 0 || timeline.contains(tickerBundleID) {
+    report("FAIL", "focus-kept", "BTC Ticker became active \(activations) times; frontmost samples: \(timeline.joined(separator: ", "))")
+} else if !duringClicks.isEmpty {
+    report("FAIL", "focus-kept", "frontmost changed within 0.3s of a click on the overlay: \(duringClicks.joined(separator: "; ")); if you switched apps at that moment, rerun")
+} else if betweenClicks.isEmpty {
+    report("PASS", "focus-kept", "frontmost stayed \(frontBefore) across launch, settings edits and \(fronts.count) clicks, each sampled before and 0.3s after its effect; BTC Ticker never became active")
 } else {
-    report("PASS", "focus-kept", "BTC Ticker never became active and was never frontmost; frontmost changed only between other apps, which a click on the panel cannot cause: \(switches.joined(separator: "; "))")
+    report("PASS", "focus-kept", "no click changed the frontmost app and BTC Ticker never became active; it changed only between clicks, never within 0.3s of one: \(betweenClicks.joined(separator: "; "))")
+}
+
+let foreign = Snapshot.read()?.foreignPresses ?? -1
+if foreign == 0 {
+    report("PASS", "undisturbed", "the overlay received only the presses this script sent")
+} else if foreign < 0 {
+    report("FAIL", "undisturbed", "the snapshot carries no foreignPresses count")
+} else {
+    report("INCONCLUSIVE", "undisturbed", "the overlay received \(foreign) presses this script did not send, so someone clicked it during the run and the click checks above may reflect that; rerun")
 }
 
 let accepted = NSRunningApplication(processIdentifier: app.processIdentifier)?.terminate() ?? false
