@@ -70,14 +70,14 @@ The settings are the same as on macOS, with one addition: each color also has an
 
 - `cargo fmt` and `cargo clippy` with warnings as errors, for the host and for the Windows target. The Windows lint type-checks the Win32 shell without linking it.
 - Unit tests over `ticker-core` against the recorded Kraken responses in `Tests/TickerCoreTests`. A test fails when a Swift test in `Tests/TickerCoreTests` has no Rust counterpart.
-- The model check, ported from `OverlayModelCheckTests.swift`. It walks every state the overlay reducer can reach (1026 states and 31,806 transitions) and asserts 18 invariants in each: the 14 from macOS and 4 for the drawn menu. Each invariant also has a deliberately broken reducer that the check must catch.
+- The model check, ported from `OverlayModelCheckTests.swift`. It walks every state the overlay reducer can reach (1026 states and 31,806 transitions) and asserts 19 invariants in each: the 14 from macOS, 4 for the drawn menu and 1 for the lock toggle. Each invariant also has a deliberately broken reducer that the check must catch.
 - Pixel tests over `ticker-paint`. For example, every pixel of the window keeps an alpha of at least 1/255. That keeps a ticker at 0% background opacity invisible but still clickable, where Windows would otherwise pass clicks through to the game.
 
 `.github/workflows/windows.yml` runs the build, the same tests and an end-to-end check on GitHub's `windows-latest` runner. The end-to-end check starts the built app next to a stand-in game window named `Wow.exe`, which is itself topmost. It then checks the following through Win32:
 
 - The ticker is on screen, above the stand-in, and back on top after the stand-in raises itself.
 - The ticker has `WS_EX_NOACTIVATE` and `WS_EX_TOOLWINDOW`.
-- The stand-in stays the foreground window through launch, settings edits and every click.
+- The stand-in stays the foreground window through launch, settings edits and every click, the right-click menu included, and no window of the app other than Settings is ever activated.
 - The chart opens and loads 120, 96 and 90 candles from live Kraken for 1m, 15m and 4h.
 - The ticker catches clicks across its whole area at 0% background opacity.
 
