@@ -38,13 +38,14 @@ public enum Timeframe: String, CaseIterable, Codable, Hashable, Sendable {
         public let label: String
         public let krakenIntervalMinutes: Int
         public let candlesKept: Int
+        public let refreshSeconds: Int
     }
 
     public var spec: Spec {
         switch self {
-        case .m1: Spec(label: "1m", krakenIntervalMinutes: 1, candlesKept: 120)
-        case .m15: Spec(label: "15m", krakenIntervalMinutes: 15, candlesKept: 96)
-        case .h4: Spec(label: "4h", krakenIntervalMinutes: 240, candlesKept: 90)
+        case .m1: Spec(label: "1m", krakenIntervalMinutes: 1, candlesKept: 120, refreshSeconds: 15)
+        case .m15: Spec(label: "15m", krakenIntervalMinutes: 15, candlesKept: 96, refreshSeconds: 60)
+        case .h4: Spec(label: "4h", krakenIntervalMinutes: 240, candlesKept: 90, refreshSeconds: 300)
         }
     }
 }

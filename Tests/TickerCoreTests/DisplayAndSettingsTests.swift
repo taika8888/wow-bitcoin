@@ -102,12 +102,28 @@ private let quote = Quote(price: 80482.4, open24h: 80442, fetchedAt: fetchedAt)
         #expect(Settings.decode(json: #"{"refreshSeconds":100000}"#).refreshSeconds == 300)
     }
 
+    @Test func chartSizeIsClampedToItsRanges() {
+        let small = Settings.decode(json: #"{"chartWidth":10,"chartHeight":-5}"#)
+        #expect(small.chartWidth == 240)
+        #expect(small.chartHeight == 120)
+        let large = Settings.decode(json: #"{"chartWidth":5000,"chartHeight":5000}"#)
+        #expect(large.chartWidth == 900)
+        #expect(large.chartHeight == 600)
+    }
+
+    @Test func lastChosenTimeframeLoadsAndAnUnknownOneFallsBack() {
+        #expect(Settings.decode(json: #"{"timeframe":"h4"}"#).timeframe == .h4)
+        #expect(Settings.decode(json: #"{"timeframe":"1w","fontSize":20}"#).timeframe == .m15)
+        #expect(Settings.decode(json: #"{"timeframe":"1w","fontSize":20}"#).fontSize == 20)
+    }
+
     @Test func defaultsMatchTheProductSpec() {
         let settings = Settings()
         #expect(settings.refreshSeconds == 5)
         #expect(settings.onlyWhenWoWActive == false)
         #expect(settings.locked == false)
         #expect(settings.position == nil)
+        #expect(settings.timeframe == .m15)
     }
 
     @Test func roundTrips() {
@@ -115,6 +131,9 @@ private let quote = Quote(price: 80482.4, open24h: 80442, fetchedAt: fetchedAt)
         settings.position = ScreenPoint(x: 120, y: 840)
         settings.downColor = RGBA(red: 0.9, green: 0.1, blue: 0.2, alpha: 0.8)
         settings.onlyWhenWoWActive = true
+        settings.timeframe = .m1
+        settings.chartWidth = 500
+        settings.chartHeight = 300
         #expect(Settings.decode(json: settings.json) == settings)
     }
 }

@@ -2,7 +2,7 @@ import Foundation
 import Testing
 import TickerCore
 
-private func fixture(_ name: String) throws -> Data {
+func fixture(_ name: String) throws -> Data {
     let url = try #require(Bundle.module.url(forResource: name, withExtension: "json", subdirectory: "Fixtures/kraken"))
     return try Data(contentsOf: url)
 }
@@ -117,6 +117,7 @@ private func failure<T>(_ parse: () throws(KrakenError) -> T) -> Failure? {
     @Test func timeframeRegistry() {
         #expect(Timeframe.allCases.map(\.spec.krakenIntervalMinutes) == [1, 15, 240])
         #expect(Timeframe.allCases.map(\.spec.candlesKept) == [120, 96, 90])
+        #expect(Timeframe.allCases.map(\.spec.refreshSeconds) == [15, 60, 300])
         #expect(Kraken.ohlcURL(.h4).absoluteString == "https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=240")
     }
 }

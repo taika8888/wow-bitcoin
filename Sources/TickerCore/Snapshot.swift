@@ -24,15 +24,28 @@ public struct Snapshot: Codable, Hashable, Sendable {
     public var visible: Bool
     public var windowNumber: Int
     public var frame: Frame
+    /// The rest describe the chart and are absent or zero while collapsed.
+    public var timeframe: String?
+    public var chart: String?
+    public var candles: Int
+    /// Click targets in the same space as `frame`: "ticker" always, and each timeframe label while expanded.
+    public var targets: [String: Frame]
 
-    public init(display: TickerDisplay, status: FeedStatus, overlay: OverlayState, windowNumber: Int, frame: Frame) {
+    public init(
+        display: TickerDisplay, status: FeedStatus, overlay: OverlayState, chart: CandleLoad?, candles: Int,
+        windowNumber: Int, frame: Frame, targets: [String: Frame]
+    ) {
         text = display.text
         feed = status.name
         mode = overlay.mode.name
         locked = overlay.settings.locked
         visible = overlay.isVisible
+        if case .expanded(let timeframe) = overlay.mode { self.timeframe = timeframe.spec.label }
+        self.chart = chart?.name
+        self.candles = candles
         self.windowNumber = windowNumber
         self.frame = frame
+        self.targets = targets
     }
 
     public var json: Data {

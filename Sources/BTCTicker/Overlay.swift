@@ -71,8 +71,11 @@ final class OverlayController {
             display: display,
             status: model.status,
             overlay: overlay,
+            chart: nil,
+            candles: 0,
             windowNumber: panel.windowNumber,
-            frame: Snapshot.Frame(x: frame.minX, y: primaryHeight - frame.maxY, width: frame.width, height: frame.height)
+            frame: Snapshot.Frame(x: frame.minX, y: primaryHeight - frame.maxY, width: frame.width, height: frame.height),
+            targets: [:]
         )
         let data = snapshot.json
         guard data != lastSnapshot else { return }

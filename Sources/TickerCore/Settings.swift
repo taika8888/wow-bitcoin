@@ -34,6 +34,8 @@ public struct Settings: Codable, Hashable, Sendable {
     public static let opacityRange: ClosedRange<Double> = 0...1
     public static let decimalsRange: ClosedRange<Int> = 0...2
     public static let refreshSecondsRange: ClosedRange<Int> = 2...300
+    public static let chartWidthRange: ClosedRange<Double> = 240...900
+    public static let chartHeightRange: ClosedRange<Double> = 120...600
 
     public var fontSize: Double = 15
     public var opacity: Double = 0.55
@@ -48,6 +50,10 @@ public struct Settings: Codable, Hashable, Sendable {
     public var onlyWhenWoWActive = false
     /// nil places the overlay at the default spot near the top-right of the main screen.
     public var position: ScreenPoint?
+    /// The timeframe the chart opens on, which is the one last chosen.
+    public var timeframe = Timeframe.m15
+    public var chartWidth: Double = 360
+    public var chartHeight: Double = 180
 
     public init() {}
 
@@ -70,6 +76,9 @@ public struct Settings: Codable, Hashable, Sendable {
         refreshSeconds = value(.refreshSeconds, defaults.refreshSeconds).clamped(to: Self.refreshSecondsRange)
         onlyWhenWoWActive = value(.onlyWhenWoWActive, defaults.onlyWhenWoWActive)
         position = value(.position, defaults.position)
+        timeframe = value(.timeframe, defaults.timeframe)
+        chartWidth = value(.chartWidth, defaults.chartWidth).clamped(to: Self.chartWidthRange)
+        chartHeight = value(.chartHeight, defaults.chartHeight).clamped(to: Self.chartHeightRange)
     }
 
     public static func decode(json: String?) -> Settings {

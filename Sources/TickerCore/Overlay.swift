@@ -2,10 +2,12 @@ import Foundation
 
 public enum OverlayMode: Hashable, Sendable {
     case collapsed
+    case expanded(Timeframe)
 
     public var name: String {
         switch self {
         case .collapsed: "collapsed"
+        case .expanded: "expanded"
         }
     }
 }
@@ -39,7 +41,10 @@ public struct OverlayState: Hashable, Sendable {
 }
 
 public enum OverlayEvent: Hashable, Sendable {
+    /// Toggles between the ticker and the chart.
     case click
+    /// Only meaningful while expanded.
+    case selectTimeframe(Timeframe)
     case dragBegan
     case dragEnded(at: ScreenPoint)
     case toggleLock
@@ -52,7 +57,9 @@ extension OverlayState {
         var next = state
         switch event {
         case .click:
-            break
+            next.mode = state.mode == .collapsed ? .expanded(state.settings.timeframe) : .collapsed
+        case .selectTimeframe(let timeframe):
+            if case .expanded = state.mode { next.settings.timeframe = timeframe }
         case .dragBegan:
             next.drag = .dragging
         case .dragEnded(let origin):
@@ -66,6 +73,9 @@ extension OverlayState {
             next.frontmost = app
         case .settingsEdited(let settings):
             next.settings = settings
+        }
+        if case .expanded = next.mode {
+            next.mode = .expanded(next.settings.timeframe)
         }
         if next.settings.locked || !next.isVisible {
             next.drag = .idle
