@@ -55,6 +55,10 @@ impl Timeframe {
         }
     }
 
+    pub(crate) const fn index(self) -> usize {
+        self as usize
+    }
+
     pub(crate) fn interval_seconds(self) -> f64 {
         f64::from(self.spec().kraken_interval_minutes * 60)
     }
