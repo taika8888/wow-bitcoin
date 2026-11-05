@@ -21,7 +21,7 @@ pub use feed::{FeedSchedule, FeedStatus};
 pub use geometry::{Point, Rect, Size};
 pub use kraken::{FetchFailure, HttpOutcome, KrakenError};
 pub use layout::{ExpandedLayout, ScreenArea, Screens, placement};
-pub use market::{Candle, Quote, Spec, Timeframe};
+pub use market::{Candle, Quote, Spec, Timeframe, Zoom, ZoomStep};
 pub use overlay::{DragPhase, Frontmost, OverlayEvent, OverlayMode, OverlayState, PressTarget};
 pub use settings::{Rgba, ScreenPoint, Settings};
 pub use snapshot::{Snapshot, SnapshotWindow};

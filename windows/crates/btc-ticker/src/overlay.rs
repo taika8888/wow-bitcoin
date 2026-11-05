@@ -59,6 +59,7 @@ struct Press {
 struct Drawn {
     ticker: Rect,
     layout: Option<ExpandedLayout>,
+    max_bars: usize,
 }
 
 impl Overlay {
@@ -147,7 +148,8 @@ impl Overlay {
             }
             None => None,
         };
-        let chart = app.chart();
+        let max_bars = expanded.as_ref().map_or(0, |(layout, ..)| layout.max_bars(scale));
+        let chart = app.chart(max_bars);
         let (frame, ticker) = match &expanded {
             Some((layout, ..)) => (layout.frame, layout.ticker),
             None => (ticker_frame, Rect::at(Point::default(), ticker_frame.size())),
@@ -165,7 +167,7 @@ impl Overlay {
         let origin = POINT { x: origin.x as i32, y: origin.y as i32 };
         self.renderer
             .present(self.hwnd, &Frame { origin, size: frame.size(), ticker, text: &text, panel, settings, scale })?;
-        self.drawn = Drawn { ticker, layout: expanded.map(|(layout, ..)| layout) };
+        self.drawn = Drawn { ticker, layout: expanded.map(|(layout, ..)| layout), max_bars };
         self.show(app.overlay().is_visible());
         Ok(())
     }
@@ -178,7 +180,7 @@ impl Overlay {
         };
     }
 
-    /// Click targets on screen: "ticker", and each timeframe's label while expanded.
+    /// Hit targets on screen: "ticker", and each timeframe's label and the "chart" while expanded.
     pub fn targets(&self) -> BTreeMap<String, Rect> {
         let origin = win::window_rect(self.hwnd).origin();
         let on_screen = |rect: Rect| rect.offset(origin.x, origin.y);
@@ -187,8 +189,14 @@ impl Overlay {
             for timeframe in Timeframe::ALL {
                 targets.insert(timeframe.spec().label.to_string(), on_screen(layout.timeframe_rect(timeframe)));
             }
+            targets.insert("chart".to_string(), on_screen(layout.chart));
         }
         targets
+    }
+
+    /// The bar budget of the chart last drawn, 0 while collapsed.
+    pub fn max_bars(&self) -> usize {
+        self.drawn.max_bars
     }
 
     fn show(&mut self, visible: bool) {

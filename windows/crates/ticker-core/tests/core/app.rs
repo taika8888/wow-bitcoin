@@ -10,7 +10,7 @@ use ticker_core::{
     Timeframe, Timestamp,
 };
 
-use crate::chart::T0;
+use crate::chart::{DEFAULT_BUDGET, T0};
 use crate::fixtures;
 
 const DROP: ScreenPoint = ScreenPoint { x: 900.0, y: 600.0 };
@@ -436,7 +436,7 @@ fn with_nothing_to_draw_the_placeholder_says_why() {
         shell.load(Timeframe::M15).notice(Timeframe::M15),
         Some(ChartNotice::Placeholder("Loading 15m candles".into()))
     );
-    assert_eq!(shell.app.chart(), None);
+    assert_eq!(shell.app.chart(DEFAULT_BUDGET), None);
     shell.finish_candles(empty_candles_body(), 0.0);
     assert_eq!(
         shell.load(Timeframe::M15).notice(Timeframe::M15),
@@ -452,10 +452,10 @@ fn the_expanded_chart_reads_back_the_recorded_candles() {
         Some((Timeframe::M15, "loading"))
     );
     shell.finish_candles(answered(fixtures::OHLC_15), 0.0);
-    assert_eq!(shell.app.chart().map(|chart| chart.bars.len()), Some(96));
+    assert_eq!(shell.app.chart(DEFAULT_BUDGET).map(|chart| chart.bars.len()), Some(96));
     shell.click(PressTarget::Body);
     assert_eq!(shell.app.overlay().mode(), OverlayMode::Collapsed);
-    assert_eq!((shell.app.expanded(), shell.app.chart()), (None, None));
+    assert_eq!((shell.app.expanded(), shell.app.chart(DEFAULT_BUDGET)), (None, None));
 }
 
 #[test]
@@ -464,7 +464,8 @@ fn the_snapshot_describes_what_is_on_screen_with_sorted_keys() {
     shell.finish_candles(answered(fixtures::OHLC_15), 0.0);
     let frame = Rect::new(-1200.0, 40.0, 376.0, 215.0);
     let targets = BTreeMap::from([("ticker".to_string(), Rect::new(-1200.0, 40.0, 182.0, 27.0))]);
-    let window = SnapshotWindow { hwnd: 0x40a2c, frame, targets, activations: 0, foreign_presses: 0 };
+    let window =
+        SnapshotWindow { hwnd: 0x40a2c, frame, targets, max_bars: DEFAULT_BUDGET, activations: 0, foreign_presses: 0 };
     let snapshot = Snapshot::new(&shell.app, window);
     assert_eq!(snapshot.text, "BTC $80,000  0.00%");
     assert_eq!(
@@ -472,13 +473,15 @@ fn the_snapshot_describes_what_is_on_screen_with_sorted_keys() {
         ("live", "expanded", Some("15m"), Some("loaded"))
     );
     assert_eq!((snapshot.candles, snapshot.fetched_at), (96, Some(T0.unix_seconds())));
+    assert_eq!((snapshot.zoom, snapshot.visible_candles, snapshot.max_bars), (Some("×1"), 96, DEFAULT_BUDGET));
     let json = snapshot.json();
     assert!(json.starts_with(r#"{"activations":0,"candles":96,"chart":"loaded","feed":"live","fetchedAt":"#), "{json}");
     assert!(json.contains(r#""frame":{"height":215.0,"width":376.0,"x":-1200.0,"y":40.0},"hwnd":264748,"#), "{json}");
     shell.click(PressTarget::Body);
     let collapsed = Snapshot::new(&shell.app, SnapshotWindow::default());
-    assert_eq!((collapsed.timeframe, collapsed.chart, collapsed.candles), (None, None, 0));
-    assert!(!collapsed.json().contains("timeframe"));
+    assert_eq!((collapsed.timeframe, collapsed.zoom, collapsed.chart, collapsed.candles), (None, None, None, 0));
+    assert_eq!(collapsed.visible_candles, 0);
+    assert!(!collapsed.json().contains("timeframe") && !collapsed.json().contains("zoom"));
 }
 
 #[test]

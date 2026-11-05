@@ -11,8 +11,11 @@ pub struct SnapshotWindow {
     pub hwnd: i64,
     /// Virtual-screen physical pixels, top-left origin, the same space as `GetWindowRect`.
     pub frame: Rect,
-    /// Click targets in the same space as `frame`: "ticker" always, and each timeframe label while expanded.
+    /// Hit targets in the same space as `frame`: "ticker" always, and each timeframe label and the "chart" while
+    /// expanded.
     pub targets: BTreeMap<String, Rect>,
+    /// The most bars the drawn chart has room for, from `ExpandedLayout::max_bars`; 0 while collapsed.
+    pub max_bars: usize,
     /// How often the overlay process became the foreground process. Clicking the overlay must never raise it.
     pub activations: u32,
     /// Presses on the overlay that did not come from the end-to-end check's own synthesized clicks.
@@ -38,9 +41,14 @@ pub struct Snapshot {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeframe: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub zoom: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub chart: Option<&'static str>,
-    /// Bars on the chart, zero while collapsed.
+    /// Bars on the chart, zero while collapsed. Runs of candles merge once the zoom shows more than fit.
     pub candles: usize,
+    /// Candles those bars stand for.
+    pub visible_candles: usize,
+    pub max_bars: usize,
     pub targets: BTreeMap<String, Rect>,
     pub activations: u32,
     pub foreign_presses: u32,
@@ -50,6 +58,7 @@ impl Snapshot {
     pub fn new(app: &App, window: SnapshotWindow) -> Snapshot {
         let status = app.status();
         let expanded = app.expanded();
+        let chart = app.chart(window.max_bars);
         Snapshot {
             text: app.display().text(),
             feed: status.name(),
@@ -61,8 +70,11 @@ impl Snapshot {
             hwnd: window.hwnd,
             frame: window.frame,
             timeframe: expanded.map(|(timeframe, _)| timeframe.spec().label),
+            zoom: expanded.map(|_| app.settings().zoom.label()),
             chart: expanded.map(|(_, load)| load.name()),
-            candles: app.chart().map_or(0, |chart| chart.bars.len()),
+            candles: chart.as_ref().map_or(0, |chart| chart.bars.len()),
+            visible_candles: chart.as_ref().map_or(0, |chart| chart.candle_count),
+            max_bars: window.max_bars,
             targets: window.targets,
             activations: window.activations,
             foreign_presses: window.foreign_presses,

@@ -3,7 +3,7 @@ use std::ops::RangeInclusive;
 use serde::{Deserialize as _, Serialize};
 use serde_json::{Map, Value};
 
-use crate::market::Timeframe;
+use crate::market::{Timeframe, Zoom};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Rgba {
@@ -65,6 +65,7 @@ pub struct Settings {
     pub position: Option<ScreenPoint>,
     /// The timeframe the chart opens on, which is the one last chosen.
     pub timeframe: Timeframe,
+    pub zoom: Zoom,
     pub chart_width: f64,
     pub chart_height: f64,
 }
@@ -85,6 +86,7 @@ impl Default for Settings {
             only_when_wow_active: false,
             position: None,
             timeframe: Timeframe::M15,
+            zoom: Zoom::Standard,
             chart_width: 360.0,
             chart_height: 180.0,
         }
@@ -136,6 +138,7 @@ impl Settings {
                 .get("timeframe")
                 .and_then(|value| Timeframe::deserialize(value).ok())
                 .unwrap_or(defaults.timeframe),
+            zoom: map.get("zoom").and_then(integer).and_then(Zoom::from_index).unwrap_or(defaults.zoom),
             chart_width: number("chartWidth", defaults.chart_width),
             chart_height: number("chartHeight", defaults.chart_height),
         }

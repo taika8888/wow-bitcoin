@@ -40,6 +40,11 @@ pub struct ExpandedLayout {
 impl ExpandedLayout {
     pub const INSET: f64 = 8.0;
     pub const GAP: f64 = 8.0;
+    /// Room the chart leaves for its trailing price labels, in device-independent pixels.
+    pub const PRICE_AXIS_WIDTH: f64 = 60.0;
+    /// The narrowest a candlestick gets before neighbours merge, in device-independent pixels. Counting in DIPs, as
+    /// the macOS app counts in points, keeps the bar count the same at every display scale.
+    pub const DIPS_PER_BAR: f64 = 2.0;
 
     /// `work` is the work area of the monitor the ticker sits on.
     pub fn new(ticker_frame: Rect, segment: Size, chart: Size, work: Rect) -> Self {
@@ -74,6 +79,11 @@ impl ExpandedLayout {
             height,
         );
         Self { opens_down, opens_right, frame, ticker, timeframes, chart }
+    }
+
+    /// How many bars the chart draws at most on a monitor at `scale` physical pixels per DIP, at least 1.
+    pub fn max_bars(&self, scale: f64) -> usize {
+        ((self.chart.width / scale - Self::PRICE_AXIS_WIDTH) / Self::DIPS_PER_BAR).max(1.0) as usize
     }
 
     pub fn timeframe_rect(&self, timeframe: Timeframe) -> Rect {

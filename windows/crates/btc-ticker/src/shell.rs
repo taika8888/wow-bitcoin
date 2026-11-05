@@ -298,6 +298,7 @@ impl Shell {
             hwnd: hwnd.0 as i64,
             frame: win::window_rect(hwnd),
             targets: self.overlay.targets(),
+            max_bars: self.overlay.max_bars(),
             activations: self.probe.activations,
             foreign_presses: self.probe.foreign_presses,
         };

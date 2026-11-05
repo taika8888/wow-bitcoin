@@ -150,6 +150,19 @@ fn timeframe_targets_are_distinct_and_hit_testable() {
 }
 
 #[test]
+fn the_default_chart_fits_150_bars_at_2_dips_each_past_the_price_axis_at_every_display_scale() {
+    let scaled = |size: Size, scale: f64| Size { width: size.width * scale, height: size.height * scale };
+    for scale in [1.0, 1.25, 1.5, 1.75, 2.0, 3.0] {
+        let ticker = Rect::at(Point { x: 20.0, y: 20.0 }, scaled(Size { width: 182.0, height: 27.0 }, scale));
+        let layout = ExpandedLayout::new(ticker, scaled(SEGMENT, scale), scaled(CHART, scale), WORK);
+        assert_eq!(layout.max_bars(scale), 150, "at {}%", scale * 100.0);
+    }
+    let dot = Size { width: 1.0, height: 1.0 };
+    let narrow = ExpandedLayout::new(Rect::new(0.0, 0.0, 10.0, 10.0), dot, Size { width: 40.0, ..CHART }, WORK);
+    assert_eq!(narrow.max_bars(1.0), 1, "a chart narrower than its price axis still draws one bar");
+}
+
+#[test]
 fn a_small_work_area_keeps_the_panel_on_screen() {
     let small = Rect::new(0.0, 0.0, 400.0, 220.0);
     let ticker = Rect::new(210.0, 3.0, 182.0, 27.0);

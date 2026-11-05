@@ -1,6 +1,6 @@
 use ticker_core::{
     DisplaySegment, FeedSchedule, FeedStatus, Quote, Rgba, ScreenPoint, Settings, TickerDisplay, Timeframe, Timestamp,
-    Tone,
+    Tone, Zoom,
 };
 
 const FETCHED_AT: Timestamp = Timestamp::from_unix_seconds(1_793_847_300.0);
@@ -145,6 +145,19 @@ fn defaults_match_the_product_spec() {
     assert!(!settings.locked);
     assert_eq!(settings.position, None);
     assert_eq!(settings.timeframe, Timeframe::M15);
+    assert_eq!(settings.zoom, Zoom::Standard);
+}
+
+#[test]
+fn last_zoom_loads_and_an_unknown_or_missing_one_is_the_standard_view() {
+    let zoom = |json: &str| Settings::decode(Some(json)).zoom;
+    assert_eq!(zoom(r#"{"zoom":5}"#), Zoom::All);
+    assert_eq!(zoom(r#"{"zoom":0}"#), Zoom::Quarter);
+    for unknown in [r#"{"zoom":9}"#, r#"{"zoom":-1}"#, r#"{"zoom":2.5}"#, r#"{"zoom":"all"}"#, r#"{"timeframe":"h4"}"#]
+    {
+        assert_eq!(zoom(unknown), Zoom::Standard, "{unknown}");
+    }
+    assert_eq!(Settings::decode(Some(r#"{"zoom":9,"fontSize":20}"#)).font_size, 20.0);
 }
 
 #[test]
@@ -154,6 +167,7 @@ fn round_trips() {
         down_color: Rgba::new(0.9, 0.1, 0.2, 0.8),
         only_when_wow_active: true,
         timeframe: Timeframe::M1,
+        zoom: Zoom::Quarter,
         chart_width: 500.0,
         chart_height: 300.0,
         ..Settings::default()
@@ -182,10 +196,12 @@ fn json_has_sorted_keys_and_the_mac_key_names() {
         "textColor",
         "timeframe",
         "upColor",
+        "zoom",
     ];
     let top: Vec<&str> = keys.iter().copied().filter(|key| top_level.contains(key)).collect();
     assert_eq!(top, top_level);
     assert!(json.contains(r#""timeframe":"m15""#));
+    assert!(json.contains(r#""zoom":2"#), "a zoom saves as its rung, as the macOS app saves it");
     assert!(!Settings::default().json().contains("position"), "no saved position writes no key");
 }
 
