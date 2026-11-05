@@ -54,4 +54,8 @@ impl Timeframe {
             Timeframe::H4 => Spec { label: "4h", kraken_interval_minutes: 240, candles_kept: 90, refresh_seconds: 300 },
         }
     }
+
+    pub(crate) fn interval_seconds(self) -> f64 {
+        f64::from(self.spec().kraken_interval_minutes * 60)
+    }
 }
