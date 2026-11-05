@@ -1,2 +1,3 @@
 import TickerCore
-print(probe)
+
+print(TickerDisplay(status: .loading, settings: Settings()).text)
