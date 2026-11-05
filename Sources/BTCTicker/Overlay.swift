@@ -147,7 +147,7 @@ final class OverlayController {
     }
 }
 
-/// The reducer, not this view, decides whether a drag may move the window or what a click means.
+/// The reducer, not this view, decides whether a press is a drag or a click and what a click means.
 final class OverlayView: NSView {
     var onEvent: (OverlayEvent) -> Void = { _ in }
     var isDragging: () -> Bool = { false }
@@ -155,7 +155,7 @@ final class OverlayView: NSView {
     private var settings = TickerCore.Settings()
     private var tickerSize = NSSize.zero
     private var expanded: (layout: ExpandedLayout, timeframe: Timeframe)?
-    private var press: (mouse: NSPoint, origin: NSPoint, moved: Bool)?
+    private var press: (mouse: NSPoint, origin: NSPoint)?
     private let padding = NSSize(width: 10, height: 4)
     private let chartHost = NSHostingView(rootView: CandleChartView())
 
@@ -258,36 +258,35 @@ final class OverlayView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard let window else { return }
-        press = (NSEvent.mouseLocation, window.frame.origin, false)
+        press = (NSEvent.mouseLocation, window.frame.origin)
+        onEvent(.pressed)
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard var current = press, let window else { return }
+        guard let press, let window else { return }
         let mouse = NSEvent.mouseLocation
-        let dx = mouse.x - current.mouse.x
-        let dy = mouse.y - current.mouse.y
-        if !current.moved, hypot(dx, dy) >= 3 {
-            current.moved = true
-            press = current
-            onEvent(.dragBegan)
-        }
-        if current.moved, isDragging() {
-            window.setFrameOrigin(NSPoint(x: current.origin.x + dx, y: current.origin.y + dy))
+        let dx = mouse.x - press.mouse.x
+        let dy = mouse.y - press.mouse.y
+        onEvent(.pointerMoved(distance: hypot(dx, dy)))
+        if isDragging() {
+            window.setFrameOrigin(NSPoint(x: press.origin.x + dx, y: press.origin.y + dy))
         }
     }
 
     /// A drop stores where the ticker line landed, not the panel, so the saved position means the same thing in both modes.
     override func mouseUp(with event: NSEvent) {
-        guard let current = press, let window else { return }
+        guard press != nil, let window else { return }
         press = nil
-        if current.moved {
-            let ticker = expanded?.layout.ticker.origin ?? .zero
-            onEvent(.dragEnded(at: ScreenPoint(x: window.frame.minX + ticker.x, y: window.frame.minY + ticker.y)))
-        } else if let timeframe = expanded?.layout.timeframe(at: convert(event.locationInWindow, from: nil)) {
-            onEvent(.selectTimeframe(timeframe))
+        let point = convert(event.locationInWindow, from: nil)
+        let target: PressTarget = if !bounds.contains(point) {
+            .outside
+        } else if let timeframe = expanded?.layout.timeframe(at: point) {
+            .timeframe(timeframe)
         } else {
-            onEvent(.click)
+            .body
         }
+        let ticker = expanded?.layout.ticker.origin ?? .zero
+        onEvent(.released(over: target, tickerOrigin: ScreenPoint(x: window.frame.minX + ticker.x, y: window.frame.minY + ticker.y)))
     }
 }
 
