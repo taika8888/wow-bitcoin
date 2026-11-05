@@ -1,0 +1,17 @@
+[package]
+name = "ticker-paint"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Rasterizes a ticker-core Frame into the premultiplied BGRA buffer UpdateLayeredWindow takes. No platform code."
+
+[dependencies]
+ticker-core.workspace = true
+tiny-skia.workspace = true
+fontdue.workspace = true
+
+[dev-dependencies]
+tiny-skia = { workspace = true, features = ["png-format"] }
+
+[lints]
+workspace = true
