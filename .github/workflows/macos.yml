@@ -1,0 +1,131 @@
+name: macos
+
+on:
+  push:
+    paths:
+      - "Package.swift"
+      - "Package.resolved"
+      - "Sources/**"
+      - "Tests/**"
+      - "scripts/**"
+      - "Support/**"
+      - "assets/**"
+      - "crates/**"
+      - ".github/workflows/macos.yml"
+  pull_request:
+    paths:
+      - "Package.swift"
+      - "Package.resolved"
+      - "Sources/**"
+      - "Tests/**"
+      - "scripts/**"
+      - "Support/**"
+      - "assets/**"
+      - "crates/**"
+      - ".github/workflows/macos.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  LOGS: build/ci
+
+jobs:
+  verify:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # The app needs Swift 6.1 (README). The image's default Xcode is used as shipped, and this fails if it is older.
+      - name: Swift toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+          version=$(swift --version 2>&1 | sed -nE 's/.*Swift version ([0-9]+\.[0-9]+(\.[0-9]+)?).*/\1/p' | head -n 1)
+          IFS=. read -r major minor _ <<<"$version"
+          if (( ${major:-0} < 6 || (${major:-0} == 6 && ${minor:-0} < 1) )); then
+            echo "::error::Swift '$version' is older than 6.1"
+            exit 1
+          fi
+
+      # No .build cache. Restored, it still recompiled every file, because checkout gives each source a new mtime: the
+      # release build took 30 s warm against 27 s cold, and the restore added 5 s.
+
+      # Each check appends one verify.sh-style line to results.txt. Later checks run after an earlier one fails, as in
+      # verify.sh, so one run reports all three.
+      - name: swift build (release, warnings as errors)
+        run: |
+          mkdir -p "$LOGS"
+          if swift build -c release -Xswiftc -warnings-as-errors 2>&1 | tee "$LOGS/build.log"; then
+            printf '%-12s %s  (%s)\n' PASS build "release, warnings as errors" >> "$LOGS/results.txt"
+          else
+            printf '%-12s %s  (%s)\n' FAIL build "$LOGS/build.log" >> "$LOGS/results.txt"
+            exit 1
+          fi
+
+      - name: swift test
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p "$LOGS"
+          if swift test 2>&1 | tee "$LOGS/test.log"; then
+            passed=$(grep -Eo 'Test run with [0-9]+ tests?( in [0-9]+ suites?)? passed' "$LOGS/test.log" | tail -n 1)
+            if [ -n "$passed" ]; then
+              printf '%-12s %s  (%s)\n' PASS test "$passed" >> "$LOGS/results.txt"
+              exit 0
+            fi
+            printf '%-12s %s  (%s)\n' FAIL test "exited 0 without a passing test run, $LOGS/test.log" >> "$LOGS/results.txt"
+          else
+            printf '%-12s %s  (%s)\n' FAIL test "$LOGS/test.log" >> "$LOGS/results.txt"
+          fi
+          exit 1
+
+      - name: bundle.sh, plutil -lint, codesign --verify --strict
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p "$LOGS"
+          app="build/BTC Ticker.app"
+          if scripts/bundle.sh 2>&1 | tee "$LOGS/bundle.log" \
+            && plutil -lint "$app/Contents/Info.plist" 2>&1 | tee -a "$LOGS/bundle.log" \
+            && codesign --verify --strict --verbose=2 "$app" 2>&1 | tee -a "$LOGS/bundle.log"; then
+            printf '%-12s %s  (%s)\n' PASS bundle "$app, plutil -lint and codesign --verify" >> "$LOGS/results.txt"
+          else
+            printf '%-12s %s  (%s)\n' FAIL bundle "$LOGS/bundle.log" >> "$LOGS/results.txt"
+            exit 1
+          fi
+
+      # The job fails unless all three checks printed a PASS line, so a check that never ran also fails it.
+      - name: Results (e2e not run, it needs a WoW window and real input)
+        if: always()
+        run: |
+          mkdir -p "$LOGS"
+          results="$LOGS/results.txt"
+          touch "$results"
+          cat "$results"
+          {
+            echo '## macOS baseline'
+            echo '```'
+            cat "$results"
+            echo '```'
+            echo 'scripts/e2e.swift is not run here. It needs a World of Warcraft window and synthesized mouse input on a'
+            echo 'desktop session the runner may not give, so run scripts/verify.sh on a real Mac for it.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          lines=$(grep -cE '^(PASS|FAIL|INCONCLUSIVE) ' "$results" || true)
+          pass=$(grep -c '^PASS ' "$results" || true)
+          echo "$lines result lines, $pass PASS, 3 expected"
+          [ "$lines" = 3 ] && [ "$pass" = 3 ]
+
+      - name: Upload build and test logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-verify-${{ github.run_number }}-${{ github.run_attempt }}
+          path: build/ci/
+          if-no-files-found: warn
