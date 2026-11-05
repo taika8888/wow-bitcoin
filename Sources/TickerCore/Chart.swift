@@ -131,21 +131,37 @@ public struct CandleChart: Hashable, Sendable {
     public let priceDomain: ClosedRange<Double>
     public let timeDomain: ClosedRange<Date>
     public let lastPrice: Double
+    /// How many candles the bars stand for, which is more than `bars.count` once runs of candles merge.
+    public let candleCount: Int
 
-    /// Shows the newest candles the zoom asks for, with the price domain fitted to those alone.
-    public init?(candles all: [Candle], timeframe: Timeframe, zoom: Zoom) {
-        let candles = all.suffix(zoom.visibleCount(timeframe, available: all.count))
-        guard let first = candles.first, let last = candles.last else { return nil }
-        let low = candles.map(\.low).min()!
-        let high = candles.map(\.high).max()!
+    /// Shows the newest candles the zoom asks for, with the price domain fitted to those alone. Past `maxBars` (at least 1),
+    /// each bar merges a run of adjacent candles counted from the newest, and a partial run at the oldest end is left out.
+    public init?(candles all: [Candle], timeframe: Timeframe, zoom: Zoom, maxBars: Int) {
+        let visible = zoom.visibleCount(timeframe, available: all.count)
+        let perBar = (visible + maxBars - 1) / maxBars
+        guard perBar > 0 else { return nil }
+        let candles = all.suffix(visible - visible % perBar)
+        let merged = stride(from: candles.startIndex, to: candles.endIndex, by: perBar).map { start in
+            let run = candles[start..<start + perBar]
+            return Candle(
+                time: run.first!.time,
+                open: run.first!.open,
+                high: run.lazy.map(\.high).max()!,
+                low: run.lazy.map(\.low).min()!,
+                close: run.last!.close
+            )
+        }
+        let low = merged.lazy.map(\.low).min()!
+        let high = merged.lazy.map(\.high).max()!
         let range = high > low ? high - low : high * 0.001
         priceDomain = (low - range * Self.pricePadding)...(high + range * Self.pricePadding)
-        let interval = TimeInterval(timeframe.spec.krakenIntervalMinutes * 60)
-        timeDomain = first.time...last.time.addingTimeInterval(interval)
-        lastPrice = last.close
+        let interval = TimeInterval(timeframe.spec.krakenIntervalMinutes * 60 * perBar)
+        timeDomain = merged.first!.time...merged.last!.time.addingTimeInterval(interval)
+        lastPrice = merged.last!.close
+        candleCount = candles.count
 
         let minimumBody = (priceDomain.upperBound - priceDomain.lowerBound) * Self.minimumBody
-        bars = candles.map { candle in
+        bars = merged.map { candle in
             let middle = (candle.open + candle.close) / 2
             let half = max(abs(candle.close - candle.open), minimumBody) / 2
             return Bar(

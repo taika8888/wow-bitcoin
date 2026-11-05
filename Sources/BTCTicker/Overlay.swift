@@ -81,8 +81,6 @@ final class OverlayController {
         var chart: CandleChart?
         var frame = ticker
         if case .expanded(let timeframe) = overlay.mode {
-            load = model.charts[timeframe]
-            chart = load?.series.flatMap { CandleChart(candles: $0.candles, timeframe: timeframe, zoom: settings.zoom) }
             let screen = TickerPlacement.screen(for: ticker, in: screens) ?? screens.first
             let layout = ExpandedLayout(
                 tickerFrame: ticker,
@@ -90,6 +88,8 @@ final class OverlayController {
                 chart: CGSize(width: settings.chartWidth, height: settings.chartHeight),
                 screen: screen?.visible ?? ticker
             )
+            load = model.charts[timeframe]
+            chart = load?.series.flatMap { CandleChart(candles: $0.candles, timeframe: timeframe, zoom: settings.zoom, maxBars: layout.maxBars) }
             view.expand(layout, timeframe: timeframe, chart: chart, notice: load?.notice(for: timeframe))
             frame = layout.frame
         } else {
@@ -209,12 +209,11 @@ final class OverlayView: NSView {
         expanded = (layout, timeframe)
         chartHost.frame = layout.chart
         chartHost.isHidden = false
-        let plotWidth = layout.chart.width - 60
         chartHost.rootView = CandleChartView(
             chart: chart,
             notice: notice,
             settings: settings,
-            bodyWidth: max(1, plotWidth / Double(max(chart?.bars.count ?? 1, 1)) * 0.7)
+            bodyWidth: max(1, layout.plotWidth / Double(max(chart?.bars.count ?? 1, 1)) * 0.7)
         )
         needsDisplay = true
     }
