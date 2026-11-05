@@ -19,6 +19,7 @@ private func events(in state: OverlayState) -> [OverlayEvent] {
     var events: [OverlayEvent] = [.click, .dragBegan, .toggleLock]
     events += dropPoints.map { .dragEnded(at: $0) }
     events += Frontmost.allCases.map { .appActivated($0) }
+    events += Timeframe.allCases.map { .selectTimeframe($0) }
     for locked in [false, true] {
         for onlyWhenWoWActive in [false, true] {
             var edited = state.settings
@@ -30,6 +31,9 @@ private func events(in state: OverlayState) -> [OverlayEvent] {
     var reset = state.settings
     reset.position = nil
     events.append(.settingsEdited(reset))
+    var retimed = state.settings
+    retimed.timeframe = .m1
+    events.append(.settingsEdited(retimed))
     return events
 }
 
@@ -44,8 +48,34 @@ private let invariants = [
         let shouldShow = !after.state.settings.onlyWhenWoWActive || [.wow, .ticker].contains(after.frontmost)
         return after.state.isVisible == shouldShow
     },
-    Invariant(name: "a click in collapsed mode never changes position") { before, event, after in
-        event != .click || before.state.mode != .collapsed || after.state.settings.position == before.state.settings.position
+    Invariant(name: "a click never changes position") { before, event, after in
+        event != .click || after.state.settings.position == before.state.settings.position
+    },
+    Invariant(name: "a click expands to the last chosen timeframe, or collapses") { before, event, after in
+        guard event == .click else { return true }
+        return after.state.mode == (before.state.mode == .collapsed ? .expanded(before.state.settings.timeframe) : .collapsed)
+    },
+    Invariant(name: "selectTimeframe while collapsed does not expand") { before, event, after in
+        guard case .selectTimeframe = event, before.state.mode == .collapsed else { return true }
+        return after.state.mode == .collapsed
+    },
+    Invariant(name: "expanded carries one of Timeframe.allCases, and it is the persisted choice") { _, _, after in
+        guard case .expanded(let timeframe) = after.state.mode else { return true }
+        return Timeframe.allCases.contains(timeframe) && timeframe == after.state.settings.timeframe
+    },
+    Invariant(name: "selectTimeframe while expanded shows that timeframe") { before, event, after in
+        guard case .selectTimeframe(let timeframe) = event, before.state.mode != .collapsed else { return true }
+        return after.state.mode == .expanded(timeframe)
+    },
+    Invariant(name: "collapsing and re-expanding returns to the last chosen timeframe") { _, _, after in
+        guard case .expanded = after.state.mode else { return true }
+        let collapsed = OverlayState.reduce(after.state, .click)
+        return collapsed.mode == .collapsed && OverlayState.reduce(collapsed, .click).mode == after.state.mode
+    },
+    Invariant(name: "hiding and showing never change the mode") { before, event, after in
+        let visibilityChanged = before.state.isVisible != after.state.isVisible
+        let isActivation = if case .appActivated = event { true } else { false }
+        return !(visibilityChanged || isActivation) || after.state.mode == before.state.mode
     },
     Invariant(name: "a locked overlay moves only through a settings edit") { before, event, after in
         if case .settingsEdited = event { return true }
@@ -111,6 +141,13 @@ private let invariants = [
         #expect(queue.contains { $0.state.drag == .dragging }, "dragging must be reachable, or the drag invariants are vacuous")
         #expect(queue.contains { !$0.state.isVisible }, "hiding must be reachable, or the visibility invariant is vacuous")
         #expect(queue.contains { $0.state.settings.locked && $0.state.settings.position == dropPoints[1] })
+        for timeframe in Timeframe.allCases {
+            #expect(queue.contains { $0.state.mode == .expanded(timeframe) }, "expanded \(timeframe) must be reachable")
+        }
+        #expect(queue.contains { $0.state.mode != .collapsed && !$0.state.isVisible }, "hidden while expanded must be reachable")
+        #expect(queue.contains { $0.state.mode != .collapsed && $0.state.settings.locked }, "clicks must expand a locked overlay")
+        #expect(queue.contains { $0.state.mode == .collapsed && $0.state.settings.timeframe != Settings().timeframe },
+                "collapsed with a non-default choice must be reachable, or the round trip only ever sees the default")
         print("model check: \(seen.count) states, \(transitions) transitions, \(invariants.count) invariants")
     }
 
