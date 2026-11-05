@@ -17,12 +17,12 @@ final class CandleChartView: PaintedView {
         let text = NSColor(settings.textColor)
         guard let chart else {
             guard case .placeholder(let message) = notice else { return }
-            let label = NSAttributedString(string: message, attributes: [.font: Self.labelFont, .foregroundColor: text.withAlphaComponent(0.6)])
+            let label = NSAttributedString(string: message, attributes: [.font: Self.labelFont, .foregroundColor: text.withAlphaComponent(text.alphaComponent * 0.6)])
             let size = label.size()
             label.draw(at: NSPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2))
             return
         }
-        let labelAttributes: [NSAttributedString.Key: Any] = [.font: Self.labelFont, .foregroundColor: text.withAlphaComponent(0.7)]
+        let labelAttributes: [NSAttributedString.Key: Any] = [.font: Self.labelFont, .foregroundColor: text.withAlphaComponent(text.alphaComponent * 0.7)]
         let labelHeight = ceil(NSAttributedString(string: "0", attributes: labelAttributes).size().height)
         let plot = NSRect(x: 0, y: 0, width: bounds.width - ExpandedLayout.priceAxisWidth, height: bounds.height - labelHeight - 4)
         guard plot.width > 0, plot.height > 0 else { return }
@@ -59,7 +59,7 @@ final class CandleChartView: PaintedView {
             let label = NSAttributedString(string: TickerDisplay.price(tick, decimals: 0), attributes: labelAttributes)
             label.draw(at: NSPoint(x: plot.maxX + 4, y: min(max(tickY - labelHeight / 2, 0), plot.maxY - labelHeight)))
         }
-        text.withAlphaComponent(0.12).setStroke()
+        text.withAlphaComponent(text.alphaComponent * 0.12).setStroke()
         grid.stroke()
 
         for bar in chart.bars {
@@ -75,7 +75,7 @@ final class CandleChartView: PaintedView {
         let lastY = y(chart.lastPrice).rounded() + 0.5
         last.move(to: NSPoint(x: plot.minX, y: lastY))
         last.line(to: NSPoint(x: plot.maxX, y: lastY))
-        text.withAlphaComponent(0.75).setStroke()
+        text.withAlphaComponent(text.alphaComponent * 0.75).setStroke()
         last.stroke()
 
         if case .stale(let marker) = notice {
