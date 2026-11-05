@@ -5,6 +5,10 @@ import CoreGraphics
 public struct ExpandedLayout: Equatable, Sendable {
     public static let inset = 8.0
     public static let gap = 8.0
+    /// Room the chart leaves for its trailing price labels.
+    public static let priceAxisWidth = 60.0
+    /// The narrowest a candlestick gets before neighbours merge, which caps the marks the chart draws at any zoom.
+    public static let pointsPerBar = 2.0
 
     public let opensDown: Bool
     public let opensRight: Bool
@@ -44,6 +48,10 @@ public struct ExpandedLayout: Equatable, Sendable {
             height: height
         )
     }
+
+    public var plotWidth: Double { chart.width - Self.priceAxisWidth }
+
+    public var maxBars: Int { max(1, Int(plotWidth / Self.pointsPerBar)) }
 
     public func timeframe(at point: CGPoint) -> Timeframe? {
         Timeframe.allCases.first { timeframes[$0]?.contains(point) == true }

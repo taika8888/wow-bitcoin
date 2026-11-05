@@ -71,9 +71,9 @@ private func failure<T>(_ parse: () throws(KrakenError) -> T) -> Failure? {
 
 @Suite struct KrakenOHLCTests {
     @Test(arguments: [(Timeframe.m1, "ohlc_1"), (.m15, "ohlc_15"), (.h4, "ohlc_240")])
-    func keepsTheNewestCandlesOldestFirst(timeframe: Timeframe, file: String) throws {
-        let candles = try Kraken.parseCandles(try fixture(file), timeframe: timeframe)
-        #expect(candles.count == timeframe.spec.candlesKept)
+    func keepsTheNewest720CandlesOfTheRecorded721OldestFirst(timeframe: Timeframe, file: String) throws {
+        let candles = try Kraken.parseCandles(try fixture(file))
+        #expect(candles.count == 720)
         let step = TimeInterval(timeframe.spec.krakenIntervalMinutes * 60)
         for (older, newer) in zip(candles, candles.dropFirst()) {
             #expect(newer.time.timeIntervalSince(older.time) == step)
@@ -85,12 +85,12 @@ private func failure<T>(_ parse: () throws(KrakenError) -> T) -> Failure? {
     }
 
     @Test func newestRecordedCandleIsLast() throws {
-        let candles = try Kraken.parseCandles(try fixture("ohlc_1"), timeframe: .m1)
+        let candles = try Kraken.parseCandles(try fixture("ohlc_1"))
         #expect(candles.last?.time == Date(timeIntervalSince1970: 1_793_847_300))
     }
 
     @Test func parsesARow() throws {
-        let candles = try Kraken.parseCandles(ohlcBody(#"[1793804100,"10","12","9","11","10.5","1.0",3]"#), timeframe: .m1)
+        let candles = try Kraken.parseCandles(ohlcBody(#"[1793804100,"10","12","9","11","10.5","1.0",3]"#))
         #expect(candles == [Candle(time: Date(timeIntervalSince1970: 1_793_804_100), open: 10, high: 12, low: 9, close: 11)])
     }
 
@@ -102,21 +102,21 @@ private func failure<T>(_ parse: () throws(KrakenError) -> T) -> Failure? {
         #"[1,"10","12","-9","11","10","1",1]"#,
     ])
     func rejectsCandlesWhoseRangeDoesNotHold(row: String) {
-        #expect(failure { () throws(KrakenError) in try Kraken.parseCandles(ohlcBody(row), timeframe: .m1) } == .invalidValue)
+        #expect(failure { () throws(KrakenError) in try Kraken.parseCandles(ohlcBody(row)) } == .invalidValue)
     }
 
     @Test func rejectsShortRows() {
-        #expect(failure { () throws(KrakenError) in try Kraken.parseCandles(ohlcBody(#"[1,"10","12"]"#), timeframe: .m1) } == .malformed)
+        #expect(failure { () throws(KrakenError) in try Kraken.parseCandles(ohlcBody(#"[1,"10","12"]"#)) } == .malformed)
     }
 
     @Test func krakenErrorArrayIsAnAPIError() {
         let body = Data(#"{"error":["EGeneral:Too many requests"],"result":{}}"#.utf8)
-        #expect(failure { () throws(KrakenError) in try Kraken.parseCandles(body, timeframe: .h4) } == .api)
+        #expect(failure { () throws(KrakenError) in try Kraken.parseCandles(body) } == .api)
     }
 
     @Test func timeframeRegistry() {
         #expect(Timeframe.allCases.map(\.spec.krakenIntervalMinutes) == [1, 15, 240])
-        #expect(Timeframe.allCases.map(\.spec.candlesKept) == [120, 96, 90])
+        #expect(Timeframe.allCases.map(\.spec.candlesShown) == [120, 96, 90])
         #expect(Timeframe.allCases.map(\.spec.refreshSeconds) == [15, 60, 300])
         #expect(Kraken.ohlcURL(.h4).absoluteString == "https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=240")
     }

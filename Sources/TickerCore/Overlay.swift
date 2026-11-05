@@ -57,6 +57,8 @@ public enum OverlayEvent: Hashable, Sendable {
     /// between the ticker and the chart, on a timeframe control it selects that timeframe.
     case released(over: PressTarget, tickerOrigin: ScreenPoint)
     case toggleLock
+    /// Steps the chart one rung along the zoom ladder, and only while the chart is on screen.
+    case zoom(Zoom.Step)
     case appActivated(Frontmost)
     case settingsEdited(Settings)
 }
@@ -87,6 +89,8 @@ extension OverlayState {
             }
         case .toggleLock:
             next.settings.locked.toggle()
+        case .zoom(let step):
+            if case .expanded = state.mode, state.isVisible { next.settings.zoom = state.settings.zoom.stepped(step) }
         case .appActivated(let app):
             next.frontmost = app
         case .settingsEdited(let settings):

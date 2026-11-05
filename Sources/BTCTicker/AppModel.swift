@@ -113,7 +113,7 @@ final class AppModel {
             return fail(.unreachable, error)
         }
         do throws(KrakenError) {
-            return .success(try Kraken.parseCandles(data, timeframe: timeframe))
+            return .success(try Kraken.parseCandles(data))
         } catch {
             return fail(.rejected(error), error)
         }

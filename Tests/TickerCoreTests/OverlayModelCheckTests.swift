@@ -19,7 +19,7 @@ private let dropPoints = [ScreenPoint(x: 10, y: 10), ScreenPoint(x: 900, y: 600)
 private let targets: [PressTarget] = [.body, .outside] + Timeframe.allCases.map { .timeframe($0) }
 
 private func events(in state: OverlayState) -> [OverlayEvent] {
-    var events: [OverlayEvent] = [.pressed, .pointerMoved(distance: 1), .pointerMoved(distance: 50), .toggleLock]
+    var events: [OverlayEvent] = [.pressed, .pointerMoved(distance: 1), .pointerMoved(distance: 50), .toggleLock, .zoom(.in), .zoom(.out)]
     events += targets.flatMap { target in dropPoints.map { .released(over: target, tickerOrigin: $0) } }
     events += Frontmost.allCases.map { .appActivated($0) }
     for locked in [false, true] {
@@ -36,6 +36,9 @@ private func events(in state: OverlayState) -> [OverlayEvent] {
     var retimed = state.settings
     retimed.timeframe = .m1
     events.append(.settingsEdited(retimed))
+    var widened = state.settings
+    widened.zoom = .all
+    events.append(.settingsEdited(widened))
     return events
 }
 
@@ -97,6 +100,32 @@ private let invariants = [
     Invariant(name: "a finished drag stores the drop point and never changes the mode") { before, event, after in
         guard case .released(_, let point) = event, before.state.drag == .dragging else { return true }
         return after.state.settings.position == point && after.state.mode == before.state.mode
+    },
+    Invariant(name: "only a zoom event on a visible chart changes the zoom, apart from a settings edit") { before, event, after in
+        if case .settingsEdited = event { return true }
+        if case .zoom = event, before.state.isVisible, before.state.mode != .collapsed { return true }
+        return after.state.settings.zoom == before.state.settings.zoom
+    },
+    Invariant(name: "a zoom event on a visible chart moves one rung its way, or stays at the end of the ladder") { before, event, after in
+        guard case .zoom(let step) = event, before.state.isVisible, before.state.mode != .collapsed else { return true }
+        let rungs = Zoom.allCases
+        let from = rungs.firstIndex(of: before.state.settings.zoom)!
+        let to = step == .in ? max(from - 1, 0) : min(from + 1, rungs.count - 1)
+        return after.state.settings.zoom == rungs[to]
+    },
+    Invariant(name: "a zoom event changes nothing but the zoom: never mode, timeframe, position, lock or drag") { before, event, after in
+        guard case .zoom = event else { return true }
+        var unzoomed = after.state
+        unzoomed.settings.zoom = before.state.settings.zoom
+        return unzoomed == before.state && after.frontmost == before.frontmost
+    },
+    Invariant(name: "the zoom is always a rung of the ladder") { _, _, after in
+        Zoom.allCases.contains(after.state.settings.zoom)
+    },
+    Invariant(name: "on a visible chart away from the ends of the ladder, zooming in then out returns to the same state") { _, _, after in
+        guard after.state.mode != .collapsed, after.state.isVisible, ![.quarter, .all].contains(after.state.settings.zoom) else { return true }
+        return [OverlayEvent.zoom(.in), .zoom(.out)].reduce(after.state, OverlayState.reduce) == after.state
+            && [OverlayEvent.zoom(.out), .zoom(.in)].reduce(after.state, OverlayState.reduce) == after.state
     },
 ]
 
@@ -171,6 +200,13 @@ private func click(_ state: OverlayState, on target: PressTarget = .body) -> Ove
         #expect(queue.contains { $0.lockedPress }, "a locked press must be reachable, or the locked-click invariant is vacuous")
         #expect(queue.contains { $0.state.mode == .collapsed && $0.state.settings.timeframe != Settings().timeframe },
                 "collapsed with a non-default choice must be reachable, or the round trip only ever sees the default")
+        for zoom in Zoom.allCases {
+            #expect(queue.contains { $0.state.mode != .collapsed && $0.state.settings.zoom == zoom }, "zoom \(zoom) must be reachable on the chart")
+        }
+        #expect(queue.contains { $0.state.mode != .collapsed && !$0.state.isVisible && $0.state.settings.zoom != .standard },
+                "a zoomed chart must be hideable, or zooming while hidden is never tried")
+        #expect(queue.contains { $0.state.mode == .collapsed && ![.standard, .all].contains($0.state.settings.zoom) },
+                "a zoom must outlive collapsing, or zooming while collapsed only ever sees the default and the edit")
         print("model check: \(seen.count) states, \(transitions) transitions, \(invariants.count) invariants")
     }
 

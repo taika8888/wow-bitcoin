@@ -19,7 +19,12 @@ let livePattern = #"^BTC \$\d{1,3}(,\d{3})*  [+-]?\d+\.\d{2}%$"#
 let editedPattern = #"^\$\d{1,3}(,\d{3})*\.\d{2}  [+-]?\d+\.\d{2}%$"#
 let syntheticClick = Notification.Name("dev.local.btcticker.e2e.click")
 let syntheticActivation = Notification.Name("dev.local.btcticker.e2e.activated")
-let candlesKept = ["1m": 120, "15m": 96, "4h": 90]
+let syntheticScroll = Notification.Name("dev.local.btcticker.e2e.scroll")
+let candlesShown = ["1m": 120, "15m": 96, "4h": 90]
+/// Kraken answers with 721 candles, the newest still forming, and the app keeps 720.
+let candlesHeld = 720
+let priceAxisWidth = 60.0
+let pointsPerBar = 2.0
 let captureDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("build")
 let workDir = FileManager.default.temporaryDirectory.appendingPathComponent("btcticker-e2e-\(getpid())")
 let stateURL = workDir.appendingPathComponent("state.json")
@@ -76,8 +81,10 @@ struct Snapshot {
     let windowNumber: Int
     let frame: CGRect
     let timeframe: String?
+    let zoom: String?
     let chart: String?
     let candles: Int
+    let visibleCandles: Int
     let targets: [String: CGRect]
     let activations: Int
     let opacity: Double
@@ -99,8 +106,10 @@ struct Snapshot {
             windowNumber: json["windowNumber"] as? Int ?? -1,
             frame: frame,
             timeframe: json["timeframe"] as? String,
+            zoom: json["zoom"] as? String,
             chart: json["chart"] as? String,
             candles: json["candles"] as? Int ?? 0,
+            visibleCandles: json["visibleCandles"] as? Int ?? 0,
             targets: (json["targets"] as? [String: Any] ?? [:]).compactMapValues(rect),
             activations: json["activations"] as? Int ?? -1,
             opacity: json["opacity"] as? Double ?? -1,
@@ -382,6 +391,20 @@ func click(_ target: String, expecting done: @escaping (Snapshot) -> Bool) -> Sn
     return result
 }
 
+/// Scrolls over the middle of the chart through the app's test route, `times` events of one delta each.
+func scroll(lines: Int? = nil, pixels: Int? = nil, times: Int, expecting done: @escaping (Snapshot) -> Bool) -> Snapshot? {
+    guard let rect = Snapshot.read()?.targets["chart"] else { return nil }
+    for _ in 0..<times {
+        DistributedNotificationCenter.default().postNotificationName(
+            syntheticScroll, object: nil,
+            userInfo: ["x": Double(rect.midX), "y": Double(rect.midY), "delta": lines ?? pixels ?? 0, "precise": pixels != nil],
+            deliverImmediately: true
+        )
+        RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+    }
+    return waitFor(10) { Snapshot.read().flatMap { done($0) ? $0 : nil } }
+}
+
 let hitGrid = (0...6).flatMap { i in (0...4).map { j in (Double(i) / 6, Double(j) / 4) } }
 
 /// Asks the window server which window takes events at each point; it skips transparent pixels of a click-through window.
@@ -396,12 +419,12 @@ func missedHits(_ snapshot: Snapshot) -> [CGPoint] {
 }
 
 func charted(_ timeframe: String) -> (Snapshot) -> Bool {
-    { $0.mode == "expanded" && $0.timeframe == timeframe && $0.chart == "loaded" && $0.candles == candlesKept[timeframe] }
+    { $0.mode == "expanded" && $0.timeframe == timeframe && $0.chart == "loaded" && $0.candles == candlesShown[timeframe] }
 }
 
 func describeChart(_ snapshot: Snapshot?) -> String {
     guard let snapshot else { return "no snapshot" }
-    return "mode \(snapshot.mode) timeframe \(snapshot.timeframe ?? "-") chart \(snapshot.chart ?? "-") candles \(snapshot.candles)"
+    return "mode \(snapshot.mode) timeframe \(snapshot.timeframe ?? "-") zoom \(snapshot.zoom ?? "-") chart \(snapshot.chart ?? "-") candles \(snapshot.candles) of \(snapshot.visibleCandles)"
 }
 
 /// Pixels close to the default up (green) and down (red) colors prove candles were drawn, not just modelled.
@@ -462,11 +485,38 @@ if let collapsed, let tickerHome {
     for timeframe in ["15m", "1m"] {
         let shown = click(timeframe, expecting: charted(timeframe))
         if let shown {
-            report("PASS", "timeframe-\(timeframe)", "clicked the \(timeframe) control: \(describeChart(shown)), expected \(candlesKept[timeframe]!)")
+            report("PASS", "timeframe-\(timeframe)", "clicked the \(timeframe) control: \(describeChart(shown)), expected \(candlesShown[timeframe]!)")
             capture(shown, timeframe)
         } else {
-            report("FAIL", "timeframe-\(timeframe)", "after clicking \(timeframe): \(describeChart(Snapshot.read())), expected \(candlesKept[timeframe]!) loaded candles")
+            report("FAIL", "timeframe-\(timeframe)", "after clicking \(timeframe): \(describeChart(Snapshot.read())), expected \(candlesShown[timeframe]!) loaded candles")
         }
+    }
+
+    let budget = Snapshot.read()?.targets["chart"].map { Int(($0.width - priceAxisWidth) / pointsPerBar) } ?? 0
+    let mergedBars = budget > 0 ? candlesHeld / Int((Double(candlesHeld) / Double(budget)).rounded(.up)) : -1
+    let notchedOut = scroll(lines: -3, times: 2) { $0.zoom == "×4" && $0.visibleCandles == 480 && $0.candles <= budget }
+    let widest = notchedOut.flatMap { _ in
+        scroll(lines: -1, times: 2) { $0.zoom == "all" && $0.visibleCandles == candlesHeld && $0.candles == mergedBars }
+    }
+    let savedAll = run("/usr/bin/defaults", ["read", suite, settingsKey]).contains(#""zoom":5"#)
+    let wheelLabel = "zoom-wheel (synthesized line-scroll NSEvent, not HID)"
+    if let notchedOut, let widest, savedAll {
+        report("PASS", wheelLabel, "two 3-line notches down over the 1m chart stepped two rungs to ×4 (\(notchedOut.visibleCandles) candles in \(notchedOut.candles) bars), two more reached and held 'all': \(widest.visibleCandles) candles in \(widest.candles) bars for a \(budget)-bar budget, saved as zoom 5")
+        capture(widest, "1m-all")
+    } else {
+        report("FAIL", wheelLabel, "\(describeChart(Snapshot.read())); stepped to ×4: \(notchedOut != nil), budget \(budget) expecting \(mergedBars) bars at 'all', saved zoom 5: \(savedAll)")
+    }
+    let standard = widest.flatMap { _ in
+        scroll(pixels: 25, times: 6) { $0.zoom == "×1" && $0.visibleCandles == candlesShown["1m"] && $0.candles == candlesShown["1m"] }
+    }
+    let savedStandard = run("/usr/bin/defaults", ["read", suite, settingsKey]).contains(#""zoom":2"#)
+    let trackpadLabel = "zoom-trackpad (synthesized pixel-scroll NSEvent, not HID)"
+    if widest == nil {
+        report("FAIL", trackpadLabel, "not tried: the wheel never reached 'all', so a return to ×1 would prove nothing")
+    } else if let standard, savedStandard {
+        report("PASS", trackpadLabel, "six 25px scrolls up added up to three rungs, back to ×1 with \(standard.candles) bars, saved as zoom 2")
+    } else {
+        report("FAIL", trackpadLabel, "after six 25px scrolls up: \(describeChart(Snapshot.read())), expected ×1 with \(candlesShown["1m"]!) bars; saved zoom 2: \(savedStandard)")
     }
 
     let folded = click("ticker") { $0.mode == "collapsed" && sameSpot($0.frame, collapsed.frame) }
