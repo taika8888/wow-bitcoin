@@ -31,6 +31,20 @@ struct SettingsView: View {
                     Slider(value: binding(\.opacity), in: Settings.opacityRange)
                 }
             }
+            Section("Chart") {
+                LabeledContent("Width") {
+                    HStack {
+                        Slider(value: binding(\.chartWidth), in: Settings.chartWidthRange, step: 10)
+                        Text("\(Int(settings.chartWidth)) pt").monospacedDigit().frame(width: 44, alignment: .trailing)
+                    }
+                }
+                LabeledContent("Height") {
+                    HStack {
+                        Slider(value: binding(\.chartHeight), in: Settings.chartHeightRange, step: 10)
+                        Text("\(Int(settings.chartHeight)) pt").monospacedDigit().frame(width: 44, alignment: .trailing)
+                    }
+                }
+            }
             Section("Behavior") {
                 Stepper("Refresh every \(settings.refreshSeconds) s", value: binding(\.refreshSeconds), in: Settings.refreshSecondsRange)
                 Toggle("Show only while World of Warcraft is frontmost", isOn: binding(\.onlyWhenWoWActive))

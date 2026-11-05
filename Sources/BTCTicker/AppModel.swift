@@ -6,10 +6,12 @@ import TickerCore
 final class AppModel {
     private(set) var overlay: OverlayState
     private(set) var status: FeedStatus = .loading
+    private(set) var charts = ChartFeed()
     @ObservationIgnored var onChange: () -> Void = {}
     @ObservationIgnored private var lastGood: Quote?
     @ObservationIgnored private let startedAt = Date()
     @ObservationIgnored private let store: SettingsStore
+    @ObservationIgnored private let session = URLSession(configuration: .ephemeral)
 
     init(store: SettingsStore, frontmost: Frontmost) {
         self.store = store
@@ -24,11 +26,11 @@ final class AppModel {
         overlay = next
         status = derivedStatus()
         onChange()
+        pumpCharts()
     }
 
     /// Sequential on purpose: the next request starts only after the previous one finished, so requests never overlap.
     func runFeed() async {
-        let session = URLSession(configuration: .ephemeral)
         var failures = 0
         while !Task.isCancelled {
             do {
@@ -52,6 +54,30 @@ final class AppModel {
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(1))
             tick()
+            pumpCharts()
+        }
+    }
+
+    /// `beginFetch` marks the timeframe loading before the request starts, so a second call cannot overlap it.
+    private func pumpCharts() {
+        guard let timeframe = charts.beginFetch(for: overlay, now: .now) else { return }
+        onChange()
+        Task {
+            let candles = await fetchCandles(timeframe)
+            charts.finish(timeframe, candles: candles, at: .now)
+            onChange()
+        }
+    }
+
+    private func fetchCandles(_ timeframe: Timeframe) async -> [Candle]? {
+        do {
+            let request = URLRequest(url: Kraken.ohlcURL(timeframe), cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
+            let (data, response) = try await session.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+            return try Kraken.parseCandles(data, timeframe: timeframe)
+        } catch {
+            FileHandle.standardError.write(Data("\(timeframe.spec.label) candle fetch failed: \(error)\n".utf8))
+            return nil
         }
     }
 
