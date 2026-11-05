@@ -248,6 +248,7 @@ impl Mouse {
         self.guard(from, allowed)?;
         self.move_to(from)?;
         self.send(MOUSEEVENTF_LEFTDOWN, 0, 0, 0)?;
+        let held = Held(self);
         std::thread::sleep(Duration::from_millis(60));
         const STEPS: i32 = 12;
         for step in 1..=STEPS {
@@ -255,7 +256,7 @@ impl Mouse {
             self.move_to(at)?;
             std::thread::sleep(Duration::from_millis(15));
         }
-        self.send(MOUSEEVENTF_LEFTUP, 0, 0, 0)?;
+        drop(held);
         std::thread::sleep(Duration::from_millis(300));
         Ok(())
     }
@@ -318,6 +319,10 @@ impl Mouse {
         if let Some(seen) = self.disturbance.get() {
             return Err(format!("sent no input, since {seen}"));
         }
+        self.inject(flags, dx, dy, data)
+    }
+
+    fn inject(&self, flags: MOUSE_EVENT_FLAGS, dx: i32, dy: i32, data: i32) -> Result<(), String> {
         let input = INPUT {
             r#type: INPUT_MOUSE,
             Anonymous: INPUT_0 {
@@ -327,6 +332,16 @@ impl Mouse {
         // SAFETY: sends one fully initialized input.
         let sent = unsafe { SendInput(&[input], size_of::<INPUT>() as i32) };
         if sent == 1 { Ok(()) } else { Err("SendInput was blocked".to_string()) }
+    }
+}
+
+/// The left button the drag pressed. Dropping it releases the button on every way out of the drag, a disturbance
+/// included, so the button is never left held down.
+struct Held<'a>(&'a Mouse);
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        let _ = self.0.inject(MOUSEEVENTF_LEFTUP, 0, 0, 0);
     }
 }
 

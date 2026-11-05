@@ -1,8 +1,10 @@
 //! The app under test: launched with a throwaway settings file and a state file it rewrites after every change.
 
+use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
@@ -46,11 +48,18 @@ pub struct Ticker {
     pub exe: PathBuf,
     state: PathBuf,
     settings: PathBuf,
+    disturbance: Rc<OnceCell<String>>,
 }
 
 impl Ticker {
     /// The settings file sits in a folder of its own that does not exist yet, as on a fresh install.
-    pub fn launch(exe: &Path, work: &Path, seed: Option<&Value>, input_tag: usize) -> std::io::Result<Ticker> {
+    pub fn launch(
+        exe: &Path,
+        work: &Path,
+        seed: Option<&Value>,
+        input_tag: usize,
+        disturbance: Rc<OnceCell<String>>,
+    ) -> std::io::Result<Ticker> {
         let (state, settings) = (work.join("state.json"), work.join("BTCTicker").join("settings.json"));
         let mut command = Command::new(exe);
         if let Some(seed) = seed {
@@ -65,11 +74,20 @@ impl Ticker {
             .spawn()?;
         let exe = std::fs::canonicalize(exe)?;
         let exe = PathBuf::from(exe.to_string_lossy().trim_start_matches(r"\\?\"));
-        Ok(Ticker { pid: child.id(), child, exe, state, settings })
+        Ok(Ticker { pid: child.id(), child, exe, state, settings, disturbance })
     }
 
+    /// Every check reads the app through here, so a press someone else made marks the run disturbed before the next
+    /// gesture or verdict, wherever in the run it lands.
     pub fn snapshot(&self) -> Option<Snapshot> {
-        serde_json::from_slice(&std::fs::read(&self.state).ok()?).ok()
+        let snapshot: Snapshot = serde_json::from_slice(&std::fs::read(&self.state).ok()?).ok()?;
+        if snapshot.foreign_presses > 0 {
+            let _ = self.disturbance.set(format!(
+                "the overlay received {} presses this check did not send, so someone clicked it during the run",
+                snapshot.foreign_presses
+            ));
+        }
+        Some(snapshot)
     }
 
     pub fn wait_for(&self, seconds: f64, wanted: impl Fn(&Snapshot) -> bool) -> Option<Snapshot> {

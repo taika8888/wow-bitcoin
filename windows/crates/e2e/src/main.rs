@@ -178,7 +178,7 @@ fn run(report: &mut Report, app: &Path, shots: &Path, pid_file: Option<PathBuf>)
     }
 
     let seed = settings(json!({ "locked": false, "refreshSeconds": 300 }));
-    let ticker = match Ticker::launch(app, &work, Some(&seed), tag) {
+    let ticker = match Ticker::launch(app, &work, Some(&seed), tag, Rc::clone(&report.disturbance)) {
         Ok(ticker) => ticker,
         Err(error) => return report.line("FAIL", "launch", format!("could not start {}: {error}", app.display())),
     };
@@ -335,7 +335,7 @@ fn window(report: &mut Report, session: &Session, monitor: &Rect) {
 /// Starts the app with no settings and no settings folder, then edits the file it should be watching.
 fn fresh_install(report: &mut Report, app: &Path, work: &Path, tag: usize, pid_file: Option<&Path>) {
     let _ = std::fs::create_dir_all(work);
-    let ticker = match Ticker::launch(app, work, None, tag) {
+    let ticker = match Ticker::launch(app, work, None, tag, Rc::clone(&report.disturbance)) {
         Ok(ticker) => ticker,
         Err(error) => {
             return report.line("FAIL", "fresh-install", format!("could not start {}: {error}", app.display()));
@@ -882,13 +882,7 @@ fn focus(report: &mut Report, session: &Session) {
     match foreign {
         0 => report.line("PASS", "undisturbed", "the overlay received only the presses this check sent"),
         u32::MAX => report.line("FAIL", "undisturbed", "no snapshot"),
-        _ => {
-            let seen = format!(
-                "the overlay received {foreign} presses this check did not send, so someone clicked it during the run"
-            );
-            let _ = report.disturbance.set(seen.clone());
-            report.line("INCONCLUSIVE", "undisturbed", seen);
-        }
+        _ => report.line("INCONCLUSIVE", "undisturbed", format!("{foreign} presses this check did not send")),
     }
 }
 
