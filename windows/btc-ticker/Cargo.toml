@@ -7,7 +7,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-ticker-core = { path = "../ticker-core" }
+ticker-core = { path = "../../crates/ticker-core" }
 serde_json.workspace = true
 windows-numerics = "0.3.1"
 

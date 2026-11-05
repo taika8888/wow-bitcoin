@@ -40,10 +40,10 @@ The end-to-end clicks and scrolls are synthesized `NSEvent`s sent through the pa
 
 ## Windows
 
-A native Windows 11 port lives in `windows/`: the pure `ticker-core` crate decides everything, and `btc-ticker` is the Win32 shell around it. It needs only the Rust toolchain (1.98 or later, MSVC target), with no C compiler or resource compiler.
+A native Windows 11 port is built from the Cargo workspace at the repo root: the pure `crates/ticker-core` crate decides everything, and `windows/btc-ticker` is the Win32 shell around it. It needs only the Rust toolchain (1.98 or later, MSVC target), with no C compiler or resource compiler.
 
 ```powershell
-cd windows; cargo build --release
+cargo build --release
 .\target\release\btc-ticker.exe
 ```
 
@@ -53,4 +53,4 @@ As on macOS, turn the mouse wheel, scroll the touchpad or pinch over the open ch
 
 Settings are stored as JSON in `%APPDATA%\BTCTicker\settings.json` and apply as soon as the file changes, including edits made by hand. Positions are physical pixels on the virtual screen, so the file is not interchangeable with the macOS app's.
 
-`powershell -NoProfile -ExecutionPolicy Bypass -File windows\scripts\verify.ps1`, run from the repo root, is the Windows loop's exit condition. It builds with warnings denied, runs clippy and the core's unit tests and model checks, then runs `btc-ticker-e2e` against the release exe. That end-to-end check covers the primary monitor with a stand-in game window, a copy of itself named `Wow.exe`, for about a minute and drives the app with real mouse input through `SendInput`. Don't touch the mouse while it runs: it refuses to click any window but its own and the app's. If it sees the cursor move or presses it did not send, it stops sending input, reports that check INCONCLUSIVE and every later one INCONCLUSIVE as not run, then still quits or kills the app it launched and checks that nothing is left behind. It also turns the wheel over the chart, and for a moment switches wheel routing to the focused window for this session only. It saves screenshots of the collapsed ticker, each timeframe's chart, the widest zoom and the Settings window to `windows/target/verify/*.png`. The app it launches uses a throwaway settings file, never yours.
+`powershell -NoProfile -ExecutionPolicy Bypass -File windows\scripts\verify.ps1`, run from the repo root, is the Windows loop's exit condition. It builds with warnings denied, runs clippy and the core's unit tests and model checks, then runs `btc-ticker-e2e` against the release exe. That end-to-end check covers the primary monitor with a stand-in game window, a copy of itself named `Wow.exe`, for about a minute and drives the app with real mouse input through `SendInput`. Don't touch the mouse while it runs: it refuses to click any window but its own and the app's. If it sees the cursor move or presses it did not send, it stops sending input, reports that check INCONCLUSIVE and every later one INCONCLUSIVE as not run, then still quits or kills the app it launched and checks that nothing is left behind. It also turns the wheel over the chart, and for a moment switches wheel routing to the focused window for this session only. It saves screenshots of the collapsed ticker, each timeframe's chart, the widest zoom and the Settings window to `target/verify/*.png`. The app it launches uses a throwaway settings file, never yours.

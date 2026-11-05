@@ -3,11 +3,19 @@ name: windows
 on:
   push:
     paths:
+      - "crates/**"
       - "windows/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rustfmt.toml"
       - ".github/workflows/windows.yml"
   pull_request:
     paths:
+      - "crates/**"
       - "windows/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rustfmt.toml"
       - ".github/workflows/windows.yml"
   workflow_dispatch:
 
@@ -32,7 +40,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: windows
           cache-on-failure: true
 
       # verify.ps1 exits 0 only when every line is PASS. The step also reads the lines itself, so a run that printed no
@@ -40,8 +47,8 @@ jobs:
       - name: verify.ps1
         shell: powershell
         run: |
-          New-Item -ItemType Directory -Force -Path windows\target\verify | Out-Null
-          $out = 'windows\target\verify\verify.txt'
+          New-Item -ItemType Directory -Force -Path target\verify | Out-Null
+          $out = 'target\verify\verify.txt'
           powershell -NoProfile -ExecutionPolicy Bypass -File windows\scripts\verify.ps1 | Tee-Object -FilePath $out
           $exit = $LASTEXITCODE
           [IO.File]::WriteAllLines((Resolve-Path $out), [string[]](Get-Content $out))
@@ -60,7 +67,7 @@ jobs:
         with:
           name: windows-verify-${{ github.run_number }}-${{ github.run_attempt }}
           path: |
-            windows/target/verify/*.png
-            windows/target/verify/*.log
-            windows/target/verify/verify.txt
+            target/verify/*.png
+            target/verify/*.log
+            target/verify/verify.txt
           if-no-files-found: warn
