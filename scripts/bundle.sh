@@ -3,7 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-swift build -c release -Xswiftc -warnings-as-errors
+scripts/build.sh -c release -Xswiftc -warnings-as-errors
 bin="$(swift build -c release --show-bin-path)"
 app="build/BTC Ticker.app"
 work="$(mktemp -d)"

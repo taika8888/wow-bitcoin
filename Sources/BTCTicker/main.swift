@@ -11,14 +11,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var settingsWindow: NSWindow?
     /// The app that was frontmost when Settings opened, usually the game, which gets focus back when Settings closes.
     private var returnTo: NSRunningApplication?
-    private var tasks: [Task<Void, Never>] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         NSApp.mainMenu = makeMainMenu()
         let environment = ProcessInfo.processInfo.environment
         let menu = makeMenu()
-        model = AppModel(store: SettingsStore(environment: environment), frontmost: Frontmost(NSWorkspace.shared.frontmostApplication))
+        do {
+            model = try AppModel(store: SettingsStore(environment: environment), frontmost: Frontmost(NSWorkspace.shared.frontmostApplication))
+        } catch {
+            FileHandle.standardError.write(Data("Could not start BTC Ticker: \(error)\n".utf8))
+            NSApp.terminate(nil)
+            return
+        }
         overlay = OverlayController(model: model, menu: menu, stateFile: environment["BTCTICKER_STATE_FILE"].map { URL(fileURLWithPath: $0) })
         model.onChange = { [weak self] in self?.overlay.render() }
         overlay.render()
@@ -45,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             }
         }
 
-        tasks = [Task { await model.runFeed() }, Task { await model.runClock() }]
+        model.start()
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

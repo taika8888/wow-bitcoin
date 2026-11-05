@@ -156,6 +156,37 @@ pub struct CandleChart {
 }
 
 impl CandleChart {
+    /// The next coarser step would leave fewer gridlines: usually 3 to 5, at most 8.
+    pub const MINIMUM_TICKS: f64 = 3.0;
+
+    /// Multiples of a 1, 2 or 5 step inside the price domain.
+    pub fn price_ticks(&self) -> Vec<f64> {
+        let span = self.price_domain.end() - self.price_domain.start();
+        if span <= 0.0 || !span.is_finite() {
+            return Vec::new();
+        }
+        let magnitude = 10f64.powf((span / Self::MINIMUM_TICKS).log10().floor());
+        ticks(*self.price_domain.start(), *self.price_domain.end(), &[magnitude, 2.0 * magnitude, 5.0 * magnitude], 0.0)
+    }
+
+    /// Round local times, with the shell supplying seconds east of UTC at the domain's start.
+    pub fn time_ticks(&self, utc_offset: i32) -> Vec<Timestamp> {
+        let steps = [
+            1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 180.0, 360.0, 720.0, 1440.0, 2880.0, 5760.0, 10080.0,
+            20160.0, 43200.0,
+        ]
+        .map(|minutes| minutes * 60.0);
+        ticks(
+            self.time_domain.start().unix_seconds(),
+            self.time_domain.end().unix_seconds(),
+            &steps,
+            f64::from(utc_offset),
+        )
+        .into_iter()
+        .map(Timestamp::from_unix_seconds)
+        .collect()
+    }
+
     /// Fraction of the price range added above the highest high and below the lowest low.
     pub const PRICE_PADDING: f64 = 0.06;
     /// Minimum body height as a fraction of the price domain.
@@ -221,4 +252,22 @@ fn tone(open: f64, close: f64) -> Tone {
     } else {
         Tone::Neutral
     }
+}
+
+fn ticks(low: f64, high: f64, steps: &[f64], offset: f64) -> Vec<f64> {
+    let span = high - low;
+    if span <= 0.0 || !span.is_finite() {
+        return Vec::new();
+    }
+    let Some(&step) = steps.iter().rev().find(|&&step| span / step >= CandleChart::MINIMUM_TICKS).or(steps.first())
+    else {
+        return Vec::new();
+    };
+    if step <= 0.0 || !step.is_finite() {
+        return Vec::new();
+    }
+    let first = ((low + offset) / step).ceil() * step - offset;
+    // A malformed remote timestamp must not cause an unbounded allocation or a non-advancing float loop.
+    let count = (((high - first) / step).floor() + 1.0).clamp(0.0, 1024.0) as usize;
+    (0..count).map(|index| first + index as f64 * step).collect()
 }

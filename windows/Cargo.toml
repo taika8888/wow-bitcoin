@@ -22,3 +22,14 @@ all = { level = "deny", priority = -1 }
 # assertions and overflow checks stay on.
 [profile.test]
 opt-level = 3
+
+# Keep Windows' speed optimization; the C boundary favors size. LTO also removes
+# Rust library code the native shells never call.
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.release.package.ticker-ffi]
+opt-level = "s"

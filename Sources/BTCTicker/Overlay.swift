@@ -81,7 +81,7 @@ final class OverlayController {
     func render() {
         let overlay = model.overlay
         let settings = overlay.settings
-        let display = TickerDisplay(status: model.status, settings: settings)
+        let display = model.state.display
         let tickerSize = view.show(display, settings: settings)
         let screens = ScreenArea.current
         let ticker = TickerPlacement.frame(saved: settings.position, size: tickerSize, screens: screens)
@@ -96,9 +96,9 @@ final class OverlayController {
                 chart: CGSize(width: settings.chartWidth, height: settings.chartHeight),
                 screen: screen?.visible ?? ticker
             )
-            load = model.charts[timeframe]
-            chart = load?.series.flatMap { CandleChart(candles: $0.candles, timeframe: timeframe, zoom: settings.zoom, maxBars: layout.maxBars) }
-            view.expand(layout, timeframe: timeframe, chart: chart, notice: load?.notice(for: timeframe))
+            load = model.state.load
+            chart = model.chart(maxBars: layout.maxBars)
+            view.expand(layout, timeframe: timeframe, chart: chart, notice: load?.notice)
             frame = layout.frame
         } else {
             view.collapse()
@@ -164,7 +164,7 @@ final class OverlayController {
         let origin = panel.frame.origin
         var snapshot = Snapshot(
             display: display,
-            status: model.status,
+            status: model.state.status,
             overlay: overlay,
             load: load,
             chart: chart,
@@ -187,6 +187,7 @@ final class OverlayView: PaintedView {
     var onEvent: (OverlayEvent) -> Void = { _ in }
     var isDragging: () -> Bool = { false }
     private var text = NSAttributedString()
+    private var shownDisplay: TickerDisplay?
     private var settings = TickerCore.Settings()
     private var tickerSize = NSSize.zero
     private var expanded: (layout: ExpandedLayout, timeframe: Timeframe)?
@@ -198,6 +199,8 @@ final class OverlayView: PaintedView {
 
     /// Returns the size of the ticker line, which is the whole overlay while collapsed.
     func show(_ display: TickerDisplay, settings: TickerCore.Settings) -> NSSize {
+        guard shownDisplay != display || self.settings != settings else { return tickerSize }
+        shownDisplay = display
         let font = NSFont.monospacedDigitSystemFont(ofSize: settings.fontSize, weight: .semibold)
         let fade = display.dimmed ? 0.5 : 1
         let runs = NSMutableAttributedString()
@@ -252,13 +255,13 @@ final class OverlayView: PaintedView {
     /// Hit targets in view coordinates, published in the snapshot so the end-to-end check knows where to click.
     var targets: [String: NSRect] {
         var targets = ["ticker": expanded?.layout.ticker ?? NSRect(origin: .zero, size: tickerSize)]
-        for (timeframe, rect) in expanded?.layout.timeframes ?? [:] { targets[timeframe.spec.label] = rect }
+        for (timeframe, rect) in expanded?.layout.timeframes ?? [:] { targets[timeframe.label] = rect }
         if let chart = expanded?.layout.chart { targets["chart"] = chart }
         return targets
     }
 
     private func label(_ timeframe: Timeframe, selected: Bool) -> NSAttributedString {
-        NSAttributedString(string: timeframe.spec.label, attributes: [
+        NSAttributedString(string: timeframe.label, attributes: [
             .font: NSFont.monospacedDigitSystemFont(ofSize: max(9, settings.fontSize * 0.75), weight: selected ? .bold : .medium),
             .foregroundColor: NSColor(settings.textColor).withAlphaComponent(selected ? 1 : 0.6),
         ])

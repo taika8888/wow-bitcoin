@@ -13,9 +13,7 @@ public struct RGBA: Codable, Hashable, Sendable {
         self.alpha = alpha
     }
 
-    fileprivate func clamped() -> RGBA {
-        RGBA(red: red.clamped(to: 0...1), green: green.clamped(to: 0...1), blue: blue.clamped(to: 0...1), alpha: alpha.clamped(to: 0...1))
-    }
+
 }
 
 /// A window origin in AppKit screen coordinates (bottom-left origin).
@@ -58,47 +56,15 @@ public struct Settings: Codable, Hashable, Sendable {
 
     public init() {}
 
-    /// Missing, mistyped, or out-of-range keys fall back to the default or the nearest bound, so an old blob still loads.
-    public init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        func value<T: Decodable>(_ key: CodingKeys, _ fallback: T) -> T {
-            ((try? container.decodeIfPresent(T.self, forKey: key)) ?? nil) ?? fallback
-        }
-        let defaults = Settings()
-        fontSize = value(.fontSize, defaults.fontSize).clamped(to: Self.fontSizeRange)
-        opacity = value(.opacity, defaults.opacity).clamped(to: Self.opacityRange)
-        textColor = value(.textColor, defaults.textColor).clamped()
-        upColor = value(.upColor, defaults.upColor).clamped()
-        downColor = value(.downColor, defaults.downColor).clamped()
-        decimals = value(.decimals, defaults.decimals).clamped(to: Self.decimalsRange)
-        showLabel = value(.showLabel, defaults.showLabel)
-        showChange = value(.showChange, defaults.showChange)
-        locked = value(.locked, defaults.locked)
-        refreshSeconds = value(.refreshSeconds, defaults.refreshSeconds).clamped(to: Self.refreshSecondsRange)
-        onlyWhenWoWActive = value(.onlyWhenWoWActive, defaults.onlyWhenWoWActive)
-        position = value(.position, defaults.position)
-        timeframe = value(.timeframe, defaults.timeframe)
-        zoom = value(.zoom, defaults.zoom)
-        chartWidth = value(.chartWidth, defaults.chartWidth).clamped(to: Self.chartWidthRange)
-        chartHeight = value(.chartHeight, defaults.chartHeight).clamped(to: Self.chartHeightRange)
-    }
-
     public static func decode(json: String?) -> Settings {
-        guard let data = json?.data(using: .utf8), let settings = try? JSONDecoder().decode(Settings.self, from: data) else {
-            return Settings()
-        }
-        return settings
+        // Settings recovery and clamping belong to the shared core, including old UserDefaults blobs.
+        let app = try! RustApp(settingsJSON: json ?? "{}", frontmost: .other, now: 0)
+        return try! app.view().settings
     }
 
     public var json: String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         return String(decoding: try! encoder.encode(self), as: UTF8.self)
-    }
-}
-
-extension Comparable {
-    fileprivate func clamped(to range: ClosedRange<Self>) -> Self {
-        min(max(self, range.lowerBound), range.upperBound)
     }
 }

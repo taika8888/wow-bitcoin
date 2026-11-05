@@ -4,135 +4,129 @@ import TickerCore
 
 @MainActor @Observable
 final class AppModel {
-    private(set) var overlay: OverlayState
-    private(set) var status: FeedStatus = .loading
-    private(set) var charts = ChartFeed()
+    private(set) var state: CoreView
+    var overlay: OverlayState { state.overlayState }
     @ObservationIgnored var onChange: () -> Void = {}
-    @ObservationIgnored private var lastGood: Quote?
-    @ObservationIgnored private var schedule = FeedSchedule()
-    @ObservationIgnored private var feedWait: Task<Void, any Error>?
-    @ObservationIgnored private let startedAt = Date()
+    @ObservationIgnored private let core: RustApp
     @ObservationIgnored private let store: SettingsStore
     @ObservationIgnored private let session = URLSession(configuration: .ephemeral)
+    @ObservationIgnored private var heartbeat: Timer?
+    @ObservationIgnored private var wakeTimer: Timer?
+    @ObservationIgnored private var wakeAt: Double?
+    @ObservationIgnored private var cachedChart: CandleChart?
+    @ObservationIgnored private var chartKey: ChartKey?
 
-    init(store: SettingsStore, frontmost: Frontmost) {
+    private struct ChartKey: Equatable {
+        let revision: UInt64
+        let timeframe: Timeframe
+        let zoom: Zoom
+        let maxBars: Int
+        let utcOffset: Int
+    }
+
+    init(store: SettingsStore, frontmost: Frontmost) throws {
         self.store = store
-        overlay = OverlayState(settings: store.load(), frontmost: frontmost)
-        store.onExternalChange = { [weak self] in self?.send(.settingsEdited($0)) }
+        core = try RustApp(settingsJSON: store.json, frontmost: frontmost, now: Date().timeIntervalSince1970)
+        state = try core.view()
+        store.onExternalChange = { [weak self] json in self?.settingsChanged(json) }
     }
 
-    func send(_ event: OverlayEvent) {
-        let next = OverlayState.reduce(overlay, event)
-        guard next != overlay else { return }
-        if next.settings != overlay.settings { store.save(next.settings) }
-        let retimed = next.settings.refreshSeconds != overlay.settings.refreshSeconds
-        overlay = next
-        if retimed { rescheduleFeed() }
-        status = derivedStatus()
-        onChange()
-        pumpCharts()
+    private func settingsChanged(_ json: String) {
+        let settings = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) ?? [:]
+        drive(try core.send(["type": "settings_changed", "settings": settings]))
     }
 
-    /// Sequential on purpose: the next request starts only after the previous one finished, so requests never overlap.
-    func runFeed() async {
-        while !Task.isCancelled {
-            let refreshSeconds = overlay.settings.refreshSeconds
-            schedule.started(at: .now)
-            do {
-                let request = URLRequest(
-                    url: Kraken.tickerURL,
-                    cachePolicy: .reloadIgnoringLocalCacheData,
-                    timeoutInterval: FeedSchedule.requestTimeout(refreshSeconds: refreshSeconds)
-                )
-                let (data, response) = try await session.data(for: request)
-                guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
-                lastGood = try Kraken.parseQuote(data, fetchedAt: .now)
-                schedule.finished(ok: true)
-            } catch {
-                schedule.finished(ok: false)
-                FileHandle.standardError.write(Data("quote fetch failed (\(schedule.failures) in a row): \(error)\n".utf8))
-            }
-            tick()
-            await waitForNextFetch()
+    func start() {
+        guard heartbeat == nil else { return }
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tick() }
         }
+        timer.tolerance = 0.1
+        RunLoop.main.add(timer, forMode: .common)
+        heartbeat = timer
+        tick()
     }
 
-    /// `rescheduleFeed()` cuts the sleep short so the wait is measured again against the current settings and schedule.
-    private func waitForNextFetch() async {
-        while true {
-            let wait = schedule.nextStart(refreshSeconds: overlay.settings.refreshSeconds).timeIntervalSinceNow
-            guard wait > 0 else { return }
-            let sleep = Task { try await Task.sleep(for: .seconds(wait)) }
-            feedWait = sleep
-            if (try? await sleep.value) != nil { return }
-        }
+    func send(_ event: OverlayEvent) { drive(try core.send(event.input)) }
+    func woke() { timedInput("woke") }
+    private func tick() { timedInput("tick") }
+
+    private func timedInput(_ kind: String) {
+        // The heartbeat carries only a clock; avoid bridging an NSDictionary on every wake.
+        drive(try core.send(json: "{\"type\":\"\(kind)\",\"now\":\(Date().timeIntervalSince1970)}"))
     }
 
-    func woke() {
-        schedule.woke()
-        rescheduleFeed()
-    }
-
-    private func rescheduleFeed() {
-        feedWait?.cancel()
-    }
-
-    /// Re-derives the status between fetches so a quote turns stale on time.
-    func runClock() async {
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(1))
-            tick()
-            pumpCharts()
-        }
-    }
-
-    /// `beginFetch` marks the timeframe loading before the request starts, so a second call cannot overlap it.
-    private func pumpCharts() {
-        guard let timeframe = charts.beginFetch(for: overlay, now: .now) else { return }
-        onChange()
-        Task {
-            let result = await fetchCandles(timeframe)
-            charts.finish(timeframe, result, at: .now)
-            onChange()
-        }
-    }
-
-    private func fetchCandles(_ timeframe: Timeframe) async -> Result<[Candle], FetchFailure> {
-        func fail(_ failure: FetchFailure, _ detail: Any) -> Result<[Candle], FetchFailure> {
-            FileHandle.standardError.write(Data("\(timeframe.spec.label) candle fetch failed: \(detail)\n".utf8))
-            return .failure(failure)
-        }
-        let request = URLRequest(url: Kraken.ohlcURL(timeframe), cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
-        let data: Data
+    private func drive(_ result: @autoclosure () throws -> CoreReply) {
         do {
-            let (body, response) = try await session.data(for: request)
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            guard status == 200 else { return fail(.status(status), "HTTP \(status)") }
-            data = body
+            let reply = try result()
+            for effect in reply.effects {
+                switch effect {
+                case .saveSettings(let settings): store.save(settings)
+                case .fetch(let fetch): fetchResult(fetch)
+                case .render:
+                    state = try core.view()
+                    onChange()
+                }
+            }
+            arm(reply.nextWake)
         } catch {
-            return fail(.unreachable, error)
-        }
-        do throws(KrakenError) {
-            return .success(try Kraken.parseCandles(data))
-        } catch {
-            return fail(.rejected(error), error)
+            FileHandle.standardError.write(Data("Rust core: \(error)\n".utf8))
         }
     }
 
-    private func tick() {
-        let next = derivedStatus()
-        guard next != status else { return }
-        status = next
-        onChange()
+    private func arm(_ next: Double?) {
+        guard next != wakeAt else { return }
+        wakeTimer?.invalidate()
+        wakeTimer = nil
+        wakeAt = next
+        guard let next else { return }
+        let timer = Timer(fire: Date(timeIntervalSince1970: next), interval: 0, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.wakeAt = nil
+                self?.tick()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        wakeTimer = timer
     }
 
-    private func derivedStatus() -> FeedStatus {
-        FeedStatus.derive(
-            lastGood: lastGood,
-            startedAt: startedAt,
-            now: .now,
-            refreshInterval: TimeInterval(overlay.settings.refreshSeconds)
-        )
+    private func fetchResult(_ fetch: CoreEffect.Fetch) {
+        Task {
+            let request = URLRequest(url: fetch.url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: fetch.timeout)
+            let outcome: [String: Any]
+            do {
+                let (body, response) = try await session.data(for: request)
+                outcome = ["type": "answered", "status": (response as? HTTPURLResponse)?.statusCode ?? 0,
+                           "body": String(data: body, encoding: .utf8) ?? ""]
+            } catch {
+                outcome = ["type": "unreachable"]
+            }
+            var input: [String: Any] = ["type": fetch.timeframe == nil ? "quote_finished" : "candles_finished",
+                                       "request": fetch.request, "outcome": outcome, "now": Date().timeIntervalSince1970]
+            if let timeframe = fetch.timeframe { input["timeframe"] = timeframe.rawValue }
+            drive(try core.send(input))
+        }
+    }
+
+    /// Quotes and heartbeat renders reuse the decoded bars; only candles, zoom, timeframe, budget or timezone invalidate them.
+    func chart(maxBars: Int) -> CandleChart? {
+        let offset = TimeZone.current.secondsFromGMT(for: state.chartStart ?? .now)
+        let key = ChartKey(revision: state.chartRevision, timeframe: state.settings.timeframe,
+                           zoom: state.settings.zoom, maxBars: maxBars, utcOffset: offset)
+        guard key != chartKey else { return cachedChart }
+        do {
+            var chart = try core.view(maxBars: maxBars, utcOffset: offset).chart
+            // Merging may omit an oldest partial run across a DST boundary.
+            if let start = chart?.timeDomain.lowerBound {
+                let exactOffset = TimeZone.current.secondsFromGMT(for: start)
+                if exactOffset != offset { chart = try core.view(maxBars: maxBars, utcOffset: exactOffset).chart }
+            }
+            cachedChart = chart
+            chartKey = key
+        } catch {
+            FileHandle.standardError.write(Data("Rust chart: \(error)\n".utf8))
+        }
+        return cachedChart
     }
 }
 
@@ -140,7 +134,7 @@ final class AppModel {
 @MainActor
 final class SettingsStore {
     static let e2eSuite = "dev.local.btcticker.e2e"
-    var onExternalChange: (Settings) -> Void = { _ in }
+    var onExternalChange: (String) -> Void = { _ in }
     private let defaults: UserDefaults
     private var observation: NSKeyValueObservation?
 
@@ -155,14 +149,12 @@ final class SettingsStore {
         observation = defaults.observe(\.btcTickerSettings) { @Sendable [weak self] _, _ in
             Task { @MainActor in
                 guard let self else { return }
-                self.onExternalChange(self.load())
+                self.onExternalChange(self.json)
             }
         }
     }
 
-    func load() -> Settings {
-        Settings.decode(json: defaults.btcTickerSettings)
-    }
+    var json: String { defaults.btcTickerSettings ?? "{}" }
 
     func save(_ settings: Settings) {
         defaults.btcTickerSettings = settings.json

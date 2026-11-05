@@ -214,3 +214,55 @@ fn stepping_walks_the_ladder_and_stops_at_its_ends() {
     assert_eq!(Zoom::All.stepped(ZoomStep::Out), Zoom::All);
     assert_eq!(Zoom::ALL.map(Zoom::label), ["×1/4", "×1/2", "×1", "×2", "×4", "all"]);
 }
+
+#[test]
+fn axes_have_round_ticks_inside_the_domain_at_every_zoom() {
+    for (body, timeframe, ..) in RECORDED {
+        let candles = parse_candles(body.as_bytes()).unwrap();
+        for zoom in Zoom::ALL {
+            let chart = CandleChart::new(&candles, timeframe, zoom, DEFAULT_BUDGET).unwrap();
+            let prices = chart.price_ticks();
+            assert!((3..=8).contains(&prices.len()));
+            assert!(prices.iter().all(|price| chart.price_domain.contains(price)));
+            let step = prices[1] - prices[0];
+            let digit = step / 10f64.powf(step.log10().floor());
+            assert!([1.0, 2.0, 5.0].iter().any(|nice| (digit - nice).abs() < 1e-9));
+            for offset in [-18000, 0, 19800, 20700, 50400] {
+                let times = chart.time_ticks(offset);
+                assert!((3..=8).contains(&times.len()));
+                assert!(times.iter().all(|time| chart.time_domain.contains(time)));
+                let step = times[1].seconds_since(times[0]);
+                assert_eq!(step % 60.0, 0.0);
+                assert!(times.iter().all(|time| (time.unix_seconds() + f64::from(offset)) % step == 0.0));
+            }
+        }
+    }
+}
+
+#[test]
+fn ticks_preserve_the_mac_step_and_boundary_rules() {
+    let mut chart = chart(&[candle(0.0, 0.0, 0)], Timeframe::M1);
+    assert!(chart.price_ticks().is_empty());
+    chart.price_domain = 0.0..=10.0;
+    assert_eq!(chart.price_ticks(), [0.0, 2.0, 4.0, 6.0, 8.0, 10.0]);
+    chart.price_domain = 80001.0..=80999.0;
+    assert_eq!(chart.price_ticks(), [80200.0, 80400.0, 80600.0, 80800.0]);
+    chart.time_domain = Timestamp::from_unix_seconds(0.0)..=Timestamp::from_unix_seconds(600.0);
+    assert_eq!(
+        chart.time_ticks(0).iter().map(|time| time.unix_seconds()).collect::<Vec<_>>(),
+        [0.0, 120.0, 240.0, 360.0, 480.0, 600.0]
+    );
+    chart.time_domain = T0..=T0;
+    assert!(chart.time_ticks(0).is_empty());
+}
+
+#[test]
+fn pathological_remote_domains_cannot_allocate_unbounded_ticks() {
+    let mut chart = chart(&[candle(100.0, 101.0, 0)], Timeframe::M1);
+    chart.time_domain = Timestamp::from_unix_seconds(0.0)..=Timestamp::from_unix_seconds(1e12);
+    assert_eq!(chart.time_ticks(0).len(), 1024);
+    chart.time_domain = T0..=Timestamp::from_unix_seconds(f64::INFINITY);
+    assert!(chart.time_ticks(0).is_empty());
+    chart.price_domain = 0.0..=f64::INFINITY;
+    assert!(chart.price_ticks().is_empty());
+}

@@ -6,12 +6,22 @@ A macOS app that floats a live Bitcoin price above World of Warcraft. Click the 
 
 ## Build and run
 
-Swift 6.1 from the Xcode Command Line Tools is enough.
+Requires Swift 6.1 from the Xcode Command Line Tools and Rust 1.98 or later (Apple Silicon host). AppKit and CPU-painted views remain native Swift; feed scheduling, interaction state, settings decoding, formatting and candle geometry run in the same `ticker-core` crate as Windows.
 
 ```sh
 ./scripts/bundle.sh              # builds "build/BTC Ticker.app"
 open "build/BTC Ticker.app"
 ```
+
+`bundle.sh` and `verify.sh` build the Rust static library first. For development, use `./scripts/build.sh` (accepts `swift build` arguments) and `./scripts/test.sh` (accepts `swift test` arguments). These are the one-command entry points on a fresh checkout. Direct SwiftPM commands need the archive prepared first, and again after Rust changes. The preparation script also invalidates the C shim so SwiftPM relinks Rust-only edits:
+
+```sh
+./scripts/build-rust.sh          # cargo build --release -p ticker-ffi --manifest-path windows/Cargo.toml
+swift build -c release -Xswiftc -warnings-as-errors
+swift test
+```
+
+This uses an ordinary C target and static link; it avoids a build plugin with network access or assumptions about SwiftPM's private output paths. There is no Rust runtime process or dynamic library to ship.
 
 The app has no Dock icon. Use the bitcoin icon in the menu bar, or right-click the ticker, to reach Settings, Lock/Unlock and Quit.
 
@@ -32,11 +42,20 @@ Settings are stored in the `dev.local.btcticker` defaults domain. A saved positi
 `./scripts/verify.sh` is the loop's exit condition. It prints one PASS, FAIL or INCONCLUSIVE line per check and exits 0 only when every line is PASS.
 
 - A release build with warnings treated as errors.
-- Unit tests over the pure `TickerCore` library, run against Kraken responses recorded in `Tests/TickerCoreTests`. One of them is an exhaustive model check. It walks every state the overlay reducer can reach under every event and asserts the invariants in each one. For example, a click never moves the ticker, and a locked ticker never drags.
+- Swift bridge tests with recorded Kraken responses, saved-settings compatibility and AppKit placement/layout tests. The pure state-machine tests now live with the shared Rust core:
+
+  ```sh
+  cd windows
+  cargo test -p ticker-core -p ticker-ffi
+  cargo clippy -p ticker-core -p ticker-ffi
+  cargo check --target x86_64-pc-windows-msvc -p btc-ticker
+  ```
+
+  The core's model checks exhaustively walk the overlay reducer and bounded app interleavings. `./scripts/mutants-mac-core.py` proves the new axis and settings parity checks fail when their behavior is deliberately broken.
 - The app bundle, checked with `plutil -lint` and `codesign --verify`.
 - End-to-end checks against the built app with a live Kraken feed. They check that the window sits on a higher layer than the WoW window, that WoW stays frontmost, that every timeframe loads its candles, that scrolling zooms out to every candle and back, and that the panel catches clicks even at opacity 0. They also save screenshots to `build/expanded-*.png`.
 
-The end-to-end clicks and scrolls are synthesized `NSEvent`s sent through the panel, not real mouse input, and the check's name says so. Real input needs Accessibility permission for the terminal that runs the script. The `e2e-above-wow` check needs a WoW window under the ticker.
+The end-to-end clicks and scrolls are synthesized `NSEvent`s sent through the panel, not real mouse input, and the check's name says so. Real input needs Accessibility permission for the terminal that runs the script. The `e2e-above-wow` check needs a WoW window under the ticker. Run GUI verification on an unlocked current desktop, with no other test ticker running; it never switches Spaces. A locked-screen run does not verify window-server hit testing. See [the Mac Rust migration record](docs/mac-rust-core.md) for parity decisions and measurements.
 
 ## Windows
 

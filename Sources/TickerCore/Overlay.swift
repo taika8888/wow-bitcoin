@@ -12,7 +12,7 @@ public enum OverlayMode: Hashable, Sendable {
     }
 }
 
-public enum Frontmost: Hashable, Sendable, CaseIterable {
+public enum Frontmost: String, Codable, Hashable, Sendable, CaseIterable {
     case wow
     /// This app, which is frontmost only while its Settings window is in use.
     case ticker
@@ -21,8 +21,8 @@ public enum Frontmost: Hashable, Sendable, CaseIterable {
     public static let wowBundleID = "com.blizzard.worldofwarcraft"
 }
 
-/// A press becomes a drag only once the pointer travels `OverlayState.dragThreshold` on an unlocked overlay.
-public enum DragPhase: Hashable, Sendable {
+/// Interaction state supplied by the shared core.
+public enum DragPhase: String, Decodable, Hashable, Sendable {
     case idle, pressed, dragging
 }
 
@@ -35,18 +35,10 @@ public enum PressTarget: Hashable, Sendable {
 }
 
 public struct OverlayState: Hashable, Sendable {
-    public var settings: Settings
-    public var frontmost: Frontmost
-    public var mode: OverlayMode = .collapsed
-    public var drag: DragPhase = .idle
-
-    public init(settings: Settings, frontmost: Frontmost) {
-        self.settings = settings
-        self.frontmost = frontmost
-    }
-
-    /// The ticker counts as "WoW active" too, so the overlay stays visible while its own Settings window is open.
-    public var isVisible: Bool { !settings.onlyWhenWoWActive || frontmost != .other }
+    public let settings: Settings
+    public let mode: OverlayMode
+    public let drag: DragPhase
+    public let isVisible: Bool
 }
 
 public enum OverlayEvent: Hashable, Sendable {
@@ -61,47 +53,4 @@ public enum OverlayEvent: Hashable, Sendable {
     case zoom(Zoom.Step)
     case appActivated(Frontmost)
     case settingsEdited(Settings)
-}
-
-extension OverlayState {
-    public static let dragThreshold = 3.0
-
-    public static func reduce(_ state: OverlayState, _ event: OverlayEvent) -> OverlayState {
-        var next = state
-        switch event {
-        case .pressed:
-            next.drag = .pressed
-        case .pointerMoved(let distance):
-            if state.drag == .pressed, !state.settings.locked, distance >= dragThreshold { next.drag = .dragging }
-        case .released(let target, let origin):
-            next.drag = .idle
-            switch (state.drag, target, state.mode) {
-            case (.dragging, _, _):
-                next.settings.position = origin
-            case (.pressed, .body, .collapsed):
-                next.mode = .expanded(state.settings.timeframe)
-            case (.pressed, .body, .expanded):
-                next.mode = .collapsed
-            case (.pressed, .timeframe(let timeframe), .expanded):
-                next.settings.timeframe = timeframe
-            default:
-                break
-            }
-        case .toggleLock:
-            next.settings.locked.toggle()
-        case .zoom(let step):
-            if case .expanded = state.mode, state.isVisible { next.settings.zoom = state.settings.zoom.stepped(step) }
-        case .appActivated(let app):
-            next.frontmost = app
-        case .settingsEdited(let settings):
-            next.settings = settings
-        }
-        if case .expanded = next.mode {
-            next.mode = .expanded(next.settings.timeframe)
-        }
-        if !next.isVisible || (next.settings.locked && next.drag == .dragging) {
-            next.drag = .idle
-        }
-        return next
-    }
 }

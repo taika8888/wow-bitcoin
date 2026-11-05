@@ -45,19 +45,18 @@ public struct Snapshot: Codable, Hashable, Sendable {
     public var foreignPresses = 0
 
     public init(
-        display: TickerDisplay, status: FeedStatus, overlay: OverlayState, load: CandleLoad?, chart: CandleChart?,
+        display: TickerDisplay, status: FeedView, overlay: OverlayState, load: CandleLoad?, chart: CandleChart?,
         windowNumber: Int, frame: Frame, targets: [String: Frame], activations: Int
     ) {
         text = display.text
         feed = status.name
-        if case .live(let quote) = status { fetchedAt = quote.fetchedAt.timeIntervalSince1970 }
-        if case .stale(let quote) = status { fetchedAt = quote.fetchedAt.timeIntervalSince1970 }
+        fetchedAt = status.fetchedAt?.timeIntervalSince1970
         mode = overlay.mode.name
         locked = overlay.settings.locked
         opacity = overlay.settings.opacity
         visible = overlay.isVisible
         if case .expanded(let timeframe) = overlay.mode {
-            self.timeframe = timeframe.spec.label
+            self.timeframe = timeframe.label
             zoom = overlay.settings.zoom.label
         }
         self.chart = load?.name

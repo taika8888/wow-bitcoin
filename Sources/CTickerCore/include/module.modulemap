@@ -1,0 +1,4 @@
+module CTickerCore {
+    header "ticker.h"
+    export *
+}

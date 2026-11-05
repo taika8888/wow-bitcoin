@@ -295,3 +295,12 @@ fn a_new_refresh_interval_applies_to_the_wait_already_running() {
     assert_eq!(schedule.next_start(300), Some(START.plus(300.0)));
     assert_eq!(schedule.next_start(2), Some(START.plus(2.0)));
 }
+
+#[test]
+fn integer_settings_match_existing_swift_json_blobs() {
+    let settings = Settings::decode(Some(r#"{"decimals":1.0,"zoom":5.0,"refreshSeconds":2e1}"#));
+    assert_eq!((settings.decimals, settings.zoom, settings.refresh_seconds), (1, Zoom::All, 20));
+    for json in [r#"{"refreshSeconds":9223372036854775808}"#, r#"{"refreshSeconds":-9223372036854775809}"#] {
+        assert_eq!(Settings::decode(Some(json)).refresh_seconds, 5);
+    }
+}
