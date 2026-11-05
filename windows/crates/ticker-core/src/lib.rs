@@ -2,6 +2,7 @@
 //! the shell passes time and results in, and acts on the effects that come back.
 
 mod app;
+mod axis;
 mod chart;
 mod display;
 mod feed;
@@ -15,6 +16,7 @@ mod snapshot;
 mod time;
 
 pub use app::{App, Effect, Input, RequestId};
+pub use axis::spaced_labels;
 pub use chart::{Bar, CandleChart, CandleLoad, CandleSeries, ChartNotice, FailedFetch};
 pub use display::{DisplaySegment, TickerDisplay, Tone};
 pub use feed::{FeedSchedule, FeedStatus};

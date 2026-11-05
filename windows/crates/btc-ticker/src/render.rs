@@ -2,8 +2,11 @@
 //! `UpdateLayeredWindow`, which gives every pixel its own alpha. Everything here is in physical pixels: the render
 //! target runs at 96 DPI and the settings' device-independent sizes are multiplied by the monitor's scale.
 
+use std::ops::Range;
+
 use ticker_core::{
     CandleChart, ChartNotice, ExpandedLayout, Rect, Rgba, Settings, Size, TickerDisplay, Timeframe, Timestamp, Tone,
+    spaced_labels,
 };
 use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
 use windows::Win32::Graphics::Direct2D::Common::{
@@ -141,6 +144,34 @@ impl Renderer {
     }
 
     pub fn present(&self, hwnd: HWND, frame: &Frame) -> Result<()> {
+        let bitmap = self.paint(frame)?;
+        // SAFETY: hands the painted DIB, which outlives the call, to the layered window.
+        unsafe {
+            let screen = GetDC(None);
+            let blend = BLENDFUNCTION {
+                BlendOp: AC_SRC_OVER as u8,
+                SourceConstantAlpha: 255,
+                AlphaFormat: AC_SRC_ALPHA as u8,
+                ..Default::default()
+            };
+            let presented = UpdateLayeredWindow(
+                hwnd,
+                Some(screen),
+                Some(&frame.origin),
+                Some(&SIZE { cx: bitmap.width, cy: bitmap.height }),
+                Some(bitmap.dc),
+                Some(&POINT::default()),
+                COLORREF(0),
+                Some(&blend),
+                ULW_ALPHA,
+            );
+            ReleaseDC(None, screen);
+            presented
+        }
+    }
+
+    /// Draws the frame into a new premultiplied DIB on the CPU.
+    fn paint(&self, frame: &Frame) -> Result<Dib> {
         let width = frame.size.width.max(1.0) as i32;
         let height = frame.size.height.max(1.0) as i32;
         let bitmap = Dib::new(width, height)?;
@@ -153,27 +184,8 @@ impl Renderer {
             self.draw(frame)?;
             self.target.EndDraw(None, None)?;
             GdiFlush().ok()?;
-            let screen = GetDC(None);
-            let blend = BLENDFUNCTION {
-                BlendOp: AC_SRC_OVER as u8,
-                SourceConstantAlpha: 255,
-                AlphaFormat: AC_SRC_ALPHA as u8,
-                ..Default::default()
-            };
-            let presented = UpdateLayeredWindow(
-                hwnd,
-                Some(screen),
-                Some(&frame.origin),
-                Some(&SIZE { cx: width, cy: height }),
-                Some(bitmap.dc),
-                Some(&POINT::default()),
-                COLORREF(0),
-                Some(&blend),
-                ULW_ALPHA,
-            );
-            ReleaseDC(None, screen);
-            presented
         }
+        Ok(bitmap)
     }
 
     /// The tray icon: an orange disc with a white "B", `size` pixels square.
@@ -330,6 +342,18 @@ impl Renderer {
         let x_of = |time: Timestamp| plot.x + time.seconds_since(start) / span * plot.width;
         let y_of = |price: f64| plot.max_y() - (price - low) / (high - low).max(f64::EPSILON) * plot.height;
 
+        let times: Vec<(f64, IDWriteTextLayout, Range<f64>)> = time_ticks(start, end)
+            .into_iter()
+            .map(|(time, text)| {
+                let x = x_of(time).round() + 0.5;
+                let label = self.text_layout(&text, &axis_format)?;
+                let width = measure(&label)?.width;
+                let left = (x - width / 2.0).clamp(plot.x, plot.max_x() - width);
+                Ok((x, label, left..left + width))
+            })
+            .collect::<Result<_>>()?;
+        let extents: Vec<Range<f64>> = times.iter().map(|(.., extent)| extent.clone()).collect();
+
         let grid = self.brush(color(settings.text_color, 0.12))?;
         let axis_ink = self.brush(color(settings.text_color, 0.7))?;
         // SAFETY: drawing between BeginDraw and EndDraw.
@@ -340,14 +364,12 @@ impl Renderer {
                 let origin = point(plot.max_x() + gap, y - label_height / 2.0);
                 self.target.DrawTextLayout(origin, label, &axis_ink, D2D1_DRAW_TEXT_OPTIONS_NONE);
             }
-            for (time, text) in time_ticks(start, end) {
-                let x = x_of(time).round() + 0.5;
-                self.target.DrawLine(point(x, plot.y), point(x, plot.max_y()), &grid, 1.0, None);
-                let label = self.text_layout(&text, &axis_format)?;
-                let width = measure(&label)?.width;
-                let left = (x - width / 2.0).clamp(plot.x, plot.max_x() - width);
-                let origin = point(left, plot.max_y() + gap / 2.0);
-                self.target.DrawTextLayout(origin, &label, &axis_ink, D2D1_DRAW_TEXT_OPTIONS_NONE);
+            for ((x, label, extent), drawn) in times.iter().zip(spaced_labels(&extents, gap)) {
+                self.target.DrawLine(point(*x, plot.y), point(*x, plot.max_y()), &grid, 1.0, None);
+                if drawn {
+                    let origin = point(extent.start, plot.max_y() + gap / 2.0);
+                    self.target.DrawTextLayout(origin, label, &axis_ink, D2D1_DRAW_TEXT_OPTIONS_NONE);
+                }
             }
 
             let body_width = (plot.width / chart.bars.len().max(1) as f64 * 0.7).max(1.0);
@@ -418,6 +440,8 @@ impl Renderer {
 
 /// A 32-bit top-down DIB selected into its own memory DC, released on drop.
 struct Dib {
+    width: i32,
+    height: i32,
     dc: HDC,
     bitmap: HBITMAP,
     bits: *mut u8,
@@ -445,7 +469,7 @@ impl Dib {
             let mut bits = std::ptr::null_mut();
             let bitmap = CreateDIBSection(Some(dc), &info, DIB_RGB_COLORS, &mut bits, None, 0)?;
             let previous = SelectObject(dc, bitmap.into());
-            Ok(Dib { dc, bitmap, bits: bits.cast(), length: (width * height * 4) as usize, previous })
+            Ok(Dib { width, height, dc, bitmap, bits: bits.cast(), length: (width * height * 4) as usize, previous })
         }
     }
 
@@ -539,3 +563,6 @@ fn time_ticks(start: Timestamp, end: Timestamp) -> Vec<(Timestamp, String)> {
     }
     ticks
 }
+
+#[cfg(test)]
+mod tests;
