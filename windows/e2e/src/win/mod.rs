@@ -1,5 +1,3 @@
-//! The Windows half: launches the app beside the harness's own windows, drives it with SendInput and registry
-//! edits, gathers facts with Win32, and hands them to `btc_ticker_e2e::judge`.
 mod child;
 mod os;
 mod watch;

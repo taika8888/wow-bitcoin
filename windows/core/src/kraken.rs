@@ -1,4 +1,3 @@
-//! The only place that knows Kraken's wire format. Callers hand in bytes and get domain types back.
 use crate::market::{Candle, Quote, Time, Timeframe};
 use serde_json::Value;
 

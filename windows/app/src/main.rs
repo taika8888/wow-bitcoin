@@ -1,4 +1,3 @@
-//! BTC Ticker for Windows. All behavior is in `ticker-core`; this binary is the Win32 shell around one `App`.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 #[cfg(windows)]

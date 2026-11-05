@@ -1,6 +1,5 @@
-//! What is on screen, derived from `App` state in one pass and used three ways: painted by `ticker-paint`,
-//! hit-tested by `App` for pointer input, and published in the snapshot. One source, so a click target cannot drift
-//! from what was drawn.
+//! One `Frame` is painted, hit-tested and published in the snapshot, so a click target cannot drift from what was
+//! drawn.
 use crate::layout::{Point, Rect, ScreenArea};
 use crate::market::Timeframe;
 use crate::overlay::{MenuItem, PressTarget};

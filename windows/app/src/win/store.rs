@@ -1,7 +1,5 @@
-//! Settings persistence: a REG_SZ value under HKEY_CURRENT_USER holding the macOS JSON blob. Changes made from
-//! outside (the e2e harness, regedit) arrive through RegNotifyChangeKeyValue on a watcher thread, which posts
-//! WM_APP_STORE to the host; the host reads the value and dispatches `Input::SettingsStored`. Our own writes echo
-//! back the same way and are no-ops in `App`, because the decoded settings are equal.
+//! Our own writes echo back through RegNotifyChangeKeyValue like outside edits do, and are no-ops in `App` because
+//! the decoded settings are equal.
 use ticker_core::{SETTINGS_VALUE, Settings};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::Registry::{

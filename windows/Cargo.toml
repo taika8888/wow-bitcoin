@@ -14,7 +14,6 @@ serde_json = { version = "1", features = ["raw_value"] }
 tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
 fontdue = { version = "0.9", default-features = false, features = ["std"] }
 png = "0.17"
-# One feature list for both binaries, so a missing feature is a local clippy error and never a CI one.
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Graphics_Gdi",

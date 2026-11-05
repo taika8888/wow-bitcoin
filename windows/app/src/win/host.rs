@@ -1,7 +1,5 @@
-//! The hidden host window: the tick and watch timers, worker replies, store notifications, power and display
-//! broadcasts, and the notification-area icon with its native menu. A real hidden top-level window rather than a
-//! message-only one, because message-only windows miss broadcasts such as TaskbarCreated, after which the icon
-//! would be gone for good once Explorer restarts.
+//! A hidden top-level window rather than a message-only one, because message-only windows miss broadcasts such as
+//! TaskbarCreated, after which the tray icon would be gone for good once Explorer restarts.
 use std::cell::Cell;
 use ticker_core::{Draw, Frame, Input, Measure, MenuItem, Point, Rect, Rgba, TextStyle};
 use ticker_paint::Fonts;

@@ -1,6 +1,5 @@
-//! The shell: one UI thread, one `App`, one message loop. `App` is borrowed only inside short closures and never
-//! across a Win32 call: SetWindowPos, UpdateLayeredWindow, ReleaseCapture and the modal loops of ChooseColor and the
-//! tray menu send messages that re-enter a window procedure, which may dispatch again.
+//! `App` is borrowed only inside short closures, never across a Win32 call: SetWindowPos, UpdateLayeredWindow,
+//! ReleaseCapture and the modal loops of ChooseColor and the tray menu re-enter a window procedure.
 mod display;
 mod foreground;
 mod host;
@@ -137,7 +136,6 @@ fn start() -> windows::core::Result<i32> {
     Ok(0)
 }
 
-/// The only path from Win32 into `App`.
 fn dispatch(input: Input) {
     let effects = SHELL.with(|shell| {
         let mut shell = shell.borrow_mut();
@@ -159,7 +157,6 @@ fn count_activation(wparam: WPARAM) {
     }
 }
 
-/// Monitors, DPI, the work area or the clock's offset changed: read them again and let `App` re-lay out.
 fn display_changed() {
     let env = display::current();
     with_shell(|shell| shell.env = env);
@@ -213,8 +210,7 @@ fn apply(effects: Effects) {
     }
 }
 
-/// Writes the snapshot to `BTCTICKER_STATE_FILE` when anything in it changed. Replaced with a rename, so the
-/// harness never reads half a file.
+/// Replaced with a rename, so the harness never reads half a file.
 fn publish() {
     let facts = FACTS.with(Cell::get);
     with_shell(|shell| {

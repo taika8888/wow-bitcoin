@@ -31,8 +31,6 @@ lint_workflow() {
 	fi
 }
 
-# The workspace holds core, paint, the app and the e2e harness, so each clippy step lints all four; the Windows
-# one is the only check the shell and the harness's Win32 half get before a runner.
 step fmt cargo fmt --all --check
 step clippy-host cargo clippy --workspace --all-targets --locked -- -D warnings
 step clippy-windows cargo clippy --workspace --all-targets --locked --target "$win" -- -D warnings

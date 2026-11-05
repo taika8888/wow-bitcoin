@@ -1,6 +1,5 @@
-//! Which app is frontmost, for "Show only while World of Warcraft is frontmost". EVENT_SYSTEM_FOREGROUND also
-//! fires for SetForegroundWindow calls the system refused, naming a window that never came to the front, so every
-//! event is confirmed with GetForegroundWindow before it counts.
+//! EVENT_SYSTEM_FOREGROUND also fires for refused SetForegroundWindow calls, naming a window that never came to the
+//! front, so every event is confirmed with GetForegroundWindow before it counts.
 use std::cell::Cell;
 use ticker_core::{Frontmost, Input};
 use windows::Win32::Foundation::{CloseHandle, HWND};

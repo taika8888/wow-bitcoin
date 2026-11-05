@@ -1,4 +1,3 @@
-//! Win32 fact gathering and input for the harness. Nothing here decides a verdict.
 use std::sync::OnceLock;
 use std::time::Instant;
 use ticker_core::{Rect, SEEDED_SETTINGS_KEY, SETTINGS_VALUE, SYNTHETIC_INPUT_TAG, Time};

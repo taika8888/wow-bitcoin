@@ -1,5 +1,3 @@
-//! The driver. Owns every piece of mutable state that AppModel and OverlayView owned on macOS and decides every
-//! effect, so the Win32 shell is a loop of `handle`, then apply the `Effects`, with no behavior of its own.
 use crate::chart::{
     CandleChart, ChartFeed, ChartNotice, FetchFailure, axis_ticks, time_label, time_ticks,
 };
@@ -15,7 +13,7 @@ use crate::overlay::{
 use crate::settings::{Rgba, ScreenPoint, Settings};
 use crate::snapshot::{Snapshot, SnapshotFrame};
 
-/// A finished HTTP exchange as the shell saw it. Bytes, not parsed: Kraken's format stays behind `kraken`.
+/// A finished HTTP exchange as the shell saw it, body unparsed.
 #[derive(Clone, Debug, PartialEq)]
 pub enum HttpReply {
     Answered {

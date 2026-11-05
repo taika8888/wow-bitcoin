@@ -1,5 +1,4 @@
-//! Embeds app.manifest with the MSVC linker itself, so no rc.exe or resource crate: PerMonitorV2 DPI awareness,
-//! comctl32 v6 for the Settings controls, asInvoker. Linking for any other target is unaffected.
+//! Embeds app.manifest with the MSVC linker itself, so no rc.exe or resource crate is needed.
 fn main() {
     println!("cargo:rerun-if-changed=app.manifest");
     if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {

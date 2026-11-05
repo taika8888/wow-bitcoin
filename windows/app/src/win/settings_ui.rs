@@ -1,9 +1,5 @@
-//! The Settings window: native controls built at runtime from `ticker_core::FORM`, one row per field, under the
-//! same sections as the macOS window. A control's id encodes its row and part, so every notification maps straight
-//! back to the field's setter; no setting is named here. Edits are live, with no Apply button, like macOS.
-//!
-//! This is the one window that activates. Opening it remembers the foreground window, normally the game, and
-//! closing it hands the foreground back.
+//! The one window that activates. Opening it remembers the foreground window, normally the game, and closing it
+//! hands the foreground back.
 use std::cell::{Cell, RefCell};
 use ticker_core::{FORM, Field, FieldKind, Input, Rgba, Settings};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -560,8 +556,7 @@ fn set_controls(hwnd: HWND, settings: &Settings) {
     }
 }
 
-/// The edit a control made, applied to a copy of the current settings and dispatched whole.
-fn edited(hwnd: HWND, control: HWND, control_id: i32) {
+fn apply_control_edit(hwnd: HWND, control: HWND, control_id: i32) {
     let offset = control_id - ID_BASE;
     let (row, part) = (offset / PARTS, offset % PARTS);
     let Some(field) = FORM.get(row as usize).filter(|_| offset >= 0) else {
@@ -691,12 +686,12 @@ extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM)
                 // SAFETY: our live window.
                 let _ = unsafe { DestroyWindow(hwnd) };
             } else if code == BN_CLICKED {
-                edited(hwnd, control, command);
+                apply_control_edit(hwnd, control, command);
             }
         }
         WM_HSCROLL | WM_VSCROLL if !control.is_invalid() => {
             // SAFETY: `control` is the scrolling child the message names.
-            edited(hwnd, control, unsafe { GetDlgCtrlID(control) });
+            apply_control_edit(hwnd, control, unsafe { GetDlgCtrlID(control) });
         }
         WM_DRAWITEM => {
             // SAFETY: for WM_DRAWITEM, lParam points at a DRAWITEMSTRUCT valid for this message.

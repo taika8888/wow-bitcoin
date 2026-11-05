@@ -1,5 +1,3 @@
-//! The overlay window, painted only through UpdateLayeredWindow. Every message it handles becomes an `Input` for
-//! `App`; the window decides nothing.
 use std::cell::{Cell, RefCell};
 use ticker_core::{Frame, Input, Point, PointerInput, SYNTHETIC_INPUT_TAG};
 use ticker_paint::Bgra;

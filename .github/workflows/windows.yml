@@ -13,7 +13,6 @@ on:
       - ".github/workflows/windows.yml"
   workflow_dispatch:
 
-# Windows minutes bill double; a newer push makes the older run worthless.
 concurrency:
   group: windows-${{ github.ref }}
   cancel-in-progress: true

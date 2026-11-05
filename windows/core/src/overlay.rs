@@ -1,5 +1,5 @@
-//! Overlay.swift plus `menu_open`. On Windows TrackPopupMenu needs its owner in the foreground, which would take
-//! focus from the game, so the menu is drawn inside the overlay and its rules live in this reducer.
+//! TrackPopupMenu needs its owner in the foreground, which would take focus from the game, so the menu is drawn
+//! inside the overlay and its rules live in this reducer.
 use crate::market::Timeframe;
 use crate::settings::{ScreenPoint, Settings};
 

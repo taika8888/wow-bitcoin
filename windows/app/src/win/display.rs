@@ -1,5 +1,4 @@
-//! The desktop as `ticker_core::Env`: every monitor's frame, work area and scale in physical px (the process is
-//! per-monitor-v2 aware), primary first, and the local clock's offset for the chart's time labels.
+//! Physical px throughout, because app.manifest makes the process per-monitor-v2 aware.
 use ticker_core::{Env, Rect, ScreenArea};
 use windows::Win32::Foundation::{LPARAM, RECT};
 use windows::Win32::Graphics::Gdi::{

@@ -1,6 +1,5 @@
-//! HTTPS through WinHTTP, so TLS and certificates are the OS's. One worker thread per kind, quote and candles, each
-//! strictly sequential like the macOS feed; `App` already keeps at most one request per kind in flight. Replies go
-//! back to the host window as a boxed `Input`.
+//! WinHTTP, so TLS and certificates are the OS's. One sequential worker per request kind is enough because `App`
+//! keeps at most one request per kind in flight.
 use std::sync::mpsc::{Sender, channel};
 use ticker_core::{HttpReply, Input, Request, Timeframe};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};

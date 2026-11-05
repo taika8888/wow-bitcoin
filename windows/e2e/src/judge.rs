@@ -1,4 +1,3 @@
-//! Pure judgements over facts the Windows half gathered.
 use crate::checks::Verdict;
 use crate::pixels::Inspection;
 use ticker_core::{Rect, Snapshot, SnapshotFrame, Timeframe};

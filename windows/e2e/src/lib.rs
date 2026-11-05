@@ -1,6 +1,4 @@
-//! The portable half of the e2e harness: the check list, the report, and every judgement over the facts the Windows
-//! half gathers. `cargo test` runs it on any OS, so the logic that turns facts into PASS or FAIL never runs for the
-//! first time on a billed runner.
+//! The portable half of the e2e harness, so `cargo test` checks its verdict logic on any OS before a runner does.
 pub mod checks;
 pub mod judge;
 pub mod pixels;
