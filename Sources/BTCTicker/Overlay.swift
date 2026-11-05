@@ -62,19 +62,20 @@ final class OverlayController {
         let settings = overlay.settings
         let display = TickerDisplay(status: model.status, settings: settings)
         let tickerSize = view.show(display, settings: settings)
-        let ticker = NSRect(origin: origin(for: settings.position, size: tickerSize), size: tickerSize)
+        let screens = ScreenArea.current
+        let ticker = TickerPlacement.frame(saved: settings.position, size: tickerSize, screens: screens)
         var load: CandleLoad?
         var chart: CandleChart?
         var frame = ticker
         if case .expanded(let timeframe) = overlay.mode {
             load = model.charts[timeframe]
             chart = load?.series.flatMap { CandleChart(candles: $0.candles, timeframe: timeframe) }
-            let screen = NSScreen.screens.first { $0.frame.intersects(ticker) } ?? NSScreen.screens.first
+            let screen = TickerPlacement.screen(for: ticker, in: screens) ?? screens.first
             let layout = ExpandedLayout(
                 tickerFrame: ticker,
                 segment: view.segmentSize,
                 chart: CGSize(width: settings.chartWidth, height: settings.chartHeight),
-                screen: screen?.visibleFrame ?? ticker
+                screen: screen?.visible ?? ticker
             )
             view.expand(layout, timeframe: timeframe, chart: chart, placeholder: Self.placeholder(load, timeframe))
             frame = layout.frame
@@ -97,16 +98,6 @@ final class OverlayController {
         case .loaded: "No \(timeframe.spec.label) candles"
         default: "Loading \(timeframe.spec.label) candles"
         }
-    }
-
-    /// A saved origin is used only while some screen still shows the overlay, so unplugging a display cannot strand it.
-    private func origin(for saved: ScreenPoint?, size: NSSize) -> NSPoint {
-        if let saved {
-            let frame = NSRect(x: saved.x, y: saved.y, width: size.width, height: size.height)
-            if NSScreen.screens.contains(where: { $0.frame.intersects(frame) }) { return frame.origin }
-        }
-        guard let area = NSScreen.screens.first?.visibleFrame else { return .zero }
-        return NSPoint(x: area.maxX - size.width - 16, y: area.maxY - size.height - 12)
     }
 
     private func click(at point: CGPoint) {
@@ -285,8 +276,17 @@ final class OverlayView: NSView {
         } else {
             .body
         }
-        let ticker = expanded?.layout.ticker.origin ?? .zero
-        onEvent(.released(over: target, tickerOrigin: ScreenPoint(x: window.frame.minX + ticker.x, y: window.frame.minY + ticker.y)))
+        let ticker = (expanded?.layout.ticker ?? NSRect(origin: .zero, size: tickerSize)).offsetBy(dx: window.frame.minX, dy: window.frame.minY)
+        let screens = ScreenArea.current
+        let screen = TickerPlacement.screen(for: ticker, in: screens) ?? TickerPlacement.screen(for: window.frame, in: screens)
+        let landed = screen.map { TickerPlacement.clamp(ticker, into: $0.visible) } ?? ticker
+        onEvent(.released(over: target, tickerOrigin: ScreenPoint(x: landed.minX, y: landed.minY)))
+    }
+}
+
+extension ScreenArea {
+    static var current: [ScreenArea] {
+        NSScreen.screens.map { ScreenArea(frame: $0.frame, visible: $0.visibleFrame) }
     }
 }
 

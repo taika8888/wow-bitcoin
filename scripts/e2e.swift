@@ -252,6 +252,21 @@ if let gated {
     report("FAIL", "only-when-wow", "frontmost \(frontNow) so visible should be \(shouldShow); snapshot visible \(last?.visible ?? false)")
 }
 
+if let area = NSScreen.screens.first?.visibleFrame {
+    let primaryHeight = CGDisplayBounds(CGMainDisplayID()).height
+    let visible = CGRect(x: area.minX, y: primaryHeight - area.maxY, width: area.width, height: area.height)
+    writeSettings(#"{"showLabel":true,"showChange":true,"decimals":0,"fontSize":15,"locked":true,"onlyWhenWoWActive":false,"position":{"x":\#(area.maxX - 20),"y":\#(area.maxY - 5)}}"#)
+    let pulledIn = waitFor(5) { Snapshot.read().flatMap { abs($0.frame.maxX - visible.maxX) < 1 && abs($0.frame.minY - visible.minY) < 1 ? $0 : nil } }
+    let listed = pulledIn.flatMap { snapshot in onScreenWindows().first { $0.number == snapshot.windowNumber } }
+    if let pulledIn, let listed, visible.contains(listed.bounds) {
+        report("PASS", "clamped", "a saved spot 20pt from the right and 5pt from the top of the visible area put the window at \(describe(listed.bounds)), flush with the corner of \(describe(visible))")
+    } else {
+        report("FAIL", "clamped", "saved spot hanging off the top right of \(describe(visible)); window at \(Snapshot.read().map { describe($0.frame) } ?? "unknown"), CG \(listed.map { describe($0.bounds) } ?? "not listed")")
+    }
+} else {
+    report("FAIL", "clamped", "no screen to measure against")
+}
+
 let frontAfterEdit = frontmostBundleID()
 
 enum ClickRoute: String {
