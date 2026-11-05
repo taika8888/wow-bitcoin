@@ -28,6 +28,9 @@ final class OverlayPanel: NSPanel {
 final class OverlayController {
     /// Test-only route for clicks: a screen point, in CGWindowList coordinates, delivered as a synthesized NSEvent.
     static let syntheticClick = Notification.Name("dev.local.btcticker.e2e.click")
+    /// Test-only route for scrolls: a screen point, in CGWindowList coordinates, and a wheel delta in lines like a mouse wheel
+    /// or in pixels like a trackpad, delivered as an NSEvent made from a CGEvent.
+    static let syntheticScroll = Notification.Name("dev.local.btcticker.e2e.scroll")
     /// Test-only: re-posts NSWorkspace's app-activated notification inside the app for a pid, leaving the real frontmost app alone.
     static let syntheticActivation = Notification.Name("dev.local.btcticker.e2e.activated")
 
@@ -54,6 +57,12 @@ final class OverlayController {
             DistributedNotificationCenter.default().addObserver(forName: Self.syntheticClick, object: nil, queue: .main) { [weak self] note in
                 guard let x = note.userInfo?["x"] as? Double, let y = note.userInfo?["y"] as? Double else { return }
                 MainActor.assumeIsolated { self?.click(at: CGPoint(x: x, y: y)) }
+            }
+            DistributedNotificationCenter.default().addObserver(forName: Self.syntheticScroll, object: nil, queue: .main) { [weak self] note in
+                guard let x = note.userInfo?["x"] as? Double, let y = note.userInfo?["y"] as? Double,
+                      let delta = note.userInfo?["delta"] as? Int, let precise = note.userInfo?["precise"] as? Bool
+                else { return }
+                MainActor.assumeIsolated { self?.scroll(at: CGPoint(x: x, y: y), delta: Int32(delta), precise: precise) }
             }
             DistributedNotificationCenter.default().addObserver(forName: Self.syntheticActivation, object: nil, queue: .main) { note in
                 guard let pid = note.userInfo?["pid"] as? Int, let app = NSRunningApplication(processIdentifier: pid_t(pid)) else { return }
@@ -102,7 +111,7 @@ final class OverlayController {
         } else {
             panel.orderOut(nil)
         }
-        writeSnapshot(display: display, overlay: overlay, load: load, candles: chart?.bars.count ?? 0)
+        writeSnapshot(display: display, overlay: overlay, load: load, chart: chart)
     }
 
     private func click(at point: CGPoint) {
@@ -116,6 +125,25 @@ final class OverlayController {
             panel.sendEvent(event)
             synthesizing = false
         }
+    }
+
+    /// NSEvent(cgEvent:) leaves a bare scroll CGEvent with no window, so the wheel's fields go onto the CGEvent of a
+    /// mouse-moved NSEvent made for the panel, which carries the window and the point in it, as the click route's events do.
+    private func scroll(at point: CGPoint, delta: Int32, precise: Bool) {
+        let local = NSPoint(x: point.x - panel.frame.minX, y: primaryHeight - point.y - panel.frame.minY)
+        guard let wheel = CGEvent(scrollWheelEvent2Source: nil, units: precise ? .pixel : .line, wheelCount: 1, wheel1: delta, wheel2: 0, wheel3: 0),
+              let carrier = NSEvent.mouseEvent(
+                  with: .mouseMoved, location: local, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                  windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0
+              )?.cgEvent
+        else { return }
+        carrier.type = .scrollWheel
+        for field in [CGEventField.scrollWheelEventDeltaAxis1, .scrollWheelEventPointDeltaAxis1, .scrollWheelEventIsContinuous] {
+            carrier.setIntegerValueField(field, value: wheel.getIntegerValueField(field))
+        }
+        carrier.setDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1, value: wheel.getDoubleValueField(.scrollWheelEventFixedPtDeltaAxis1))
+        guard let event = NSEvent(cgEvent: carrier) else { return }
+        panel.sendEvent(event)
     }
 
     private var primaryHeight: CGFloat { NSScreen.screens.first?.frame.height ?? 0 }
@@ -132,15 +160,15 @@ final class OverlayController {
         }
     }
 
-    private func writeSnapshot(display: TickerDisplay, overlay: OverlayState, load: CandleLoad?, candles: Int) {
+    private func writeSnapshot(display: TickerDisplay, overlay: OverlayState, load: CandleLoad?, chart: CandleChart?) {
         guard let stateFile else { return }
         let origin = panel.frame.origin
         var snapshot = Snapshot(
             display: display,
             status: model.status,
             overlay: overlay,
-            chart: load,
-            candles: candles,
+            load: load,
+            chart: chart,
             windowNumber: panel.windowNumber,
             frame: globalFrame(panel.frame),
             targets: view.targets.mapValues { globalFrame($0.offsetBy(dx: origin.x, dy: origin.y)) },
@@ -155,7 +183,7 @@ final class OverlayController {
     }
 }
 
-/// The reducer, not this view, decides whether a press is a drag or a click and what a click means.
+/// The reducer, not this view, decides whether a press is a drag or a click, what a click means, and what a zoom step changes.
 final class OverlayView: NSView {
     var onEvent: (OverlayEvent) -> Void = { _ in }
     var isDragging: () -> Bool = { false }
@@ -164,6 +192,8 @@ final class OverlayView: NSView {
     private var tickerSize = NSSize.zero
     private var expanded: (layout: ExpandedLayout, timeframe: Timeframe)?
     private var press: (mouse: NSPoint, origin: NSPoint)?
+    /// Trackpad scroll or pinch gathered toward the next zoom step, in steps.
+    private var zoomTravel = 0.0
     private let padding = NSSize(width: 10, height: 4)
     private let chartHost = NSHostingView(rootView: CandleChartView())
 
@@ -228,6 +258,7 @@ final class OverlayView: NSView {
     var targets: [String: NSRect] {
         var targets = ["ticker": expanded?.layout.ticker ?? NSRect(origin: .zero, size: tickerSize)]
         for (timeframe, rect) in expanded?.layout.timeframes ?? [:] { targets[timeframe.spec.label] = rect }
+        if let chart = expanded?.layout.chart { targets["chart"] = chart }
         return targets
     }
 
@@ -277,6 +308,40 @@ final class OverlayView: NSView {
         onEvent(.pointerMoved(distance: hypot(dx, dy)))
         if isDragging() {
             window.setFrameOrigin(NSPoint(x: press.origin.x + dx, y: press.origin.y + dy))
+        }
+    }
+
+    /// Over the chart, scrolling up zooms in. A mouse wheel steps once per notch. A trackpad steps once per `scrollPerStep`
+    /// points of travel, and its momentum after the fingers lift is ignored so a flick cannot run the whole ladder.
+    override func scrollWheel(with event: NSEvent) {
+        guard overChart(event) else { return super.scrollWheel(with: event) }
+        if !event.hasPreciseScrollingDeltas {
+            if event.scrollingDeltaY != 0 { onEvent(.zoom(event.scrollingDeltaY > 0 ? .in : .out)) }
+        } else if event.momentumPhase.isEmpty {
+            zoom(by: event.scrollingDeltaY / Self.scrollPerStep, restart: event.phase == .began)
+        }
+    }
+
+    /// Pinching out zooms in, one step per `pinchPerStep` of magnification.
+    override func magnify(with event: NSEvent) {
+        guard overChart(event) else { return super.magnify(with: event) }
+        zoom(by: event.magnification / Self.pinchPerStep, restart: event.phase == .began)
+    }
+
+    private static let scrollPerStep = 50.0
+    private static let pinchPerStep = 0.25
+
+    private func overChart(_ event: NSEvent) -> Bool {
+        expanded?.layout.chart.contains(convert(event.locationInWindow, from: nil)) == true
+    }
+
+    private func zoom(by steps: Double, restart: Bool) {
+        if restart { zoomTravel = 0 }
+        zoomTravel += steps
+        while abs(zoomTravel) >= 1 {
+            let step: Zoom.Step = zoomTravel > 0 ? .in : .out
+            zoomTravel -= step == .in ? 1 : -1
+            onEvent(.zoom(step))
         }
     }
 

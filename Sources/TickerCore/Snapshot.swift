@@ -29,9 +29,13 @@ public struct Snapshot: Codable, Hashable, Sendable {
     public var frame: Frame
     /// The rest describe the chart and are absent or zero while collapsed.
     public var timeframe: String?
+    public var zoom: String?
     public var chart: String?
+    /// Bars drawn, which merge runs of candles once the zoom shows more than fit the plot.
     public var candles: Int
-    /// Click targets in the same space as `frame`: "ticker" always, and each timeframe label while expanded.
+    /// Candles those bars stand for.
+    public var visibleCandles: Int
+    /// Hit targets in the same space as `frame`: "ticker" always, and each timeframe label and the "chart" while expanded.
     public var targets: [String: Frame]
     /// How often this app became the active app. Clicking the overlay must never raise it.
     public var activations: Int
@@ -41,7 +45,7 @@ public struct Snapshot: Codable, Hashable, Sendable {
     public var foreignPresses = 0
 
     public init(
-        display: TickerDisplay, status: FeedStatus, overlay: OverlayState, chart: CandleLoad?, candles: Int,
+        display: TickerDisplay, status: FeedStatus, overlay: OverlayState, load: CandleLoad?, chart: CandleChart?,
         windowNumber: Int, frame: Frame, targets: [String: Frame], activations: Int
     ) {
         text = display.text
@@ -52,9 +56,13 @@ public struct Snapshot: Codable, Hashable, Sendable {
         locked = overlay.settings.locked
         opacity = overlay.settings.opacity
         visible = overlay.isVisible
-        if case .expanded(let timeframe) = overlay.mode { self.timeframe = timeframe.spec.label }
-        self.chart = chart?.name
-        self.candles = candles
+        if case .expanded(let timeframe) = overlay.mode {
+            self.timeframe = timeframe.spec.label
+            zoom = overlay.settings.zoom.label
+        }
+        self.chart = load?.name
+        candles = chart?.bars.count ?? 0
+        visibleCandles = chart?.candleCount ?? 0
         self.windowNumber = windowNumber
         self.frame = frame
         self.targets = targets
