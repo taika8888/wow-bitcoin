@@ -77,6 +77,7 @@ struct Snapshot {
     let candles: Int
     let targets: [String: CGRect]
     let activations: Int
+    let opacity: Double
 
     static func read() -> Snapshot? {
         guard let data = try? Data(contentsOf: stateURL),
@@ -95,7 +96,8 @@ struct Snapshot {
             chart: json["chart"] as? String,
             candles: json["candles"] as? Int ?? 0,
             targets: (json["targets"] as? [String: Any] ?? [:]).compactMapValues(rect),
-            activations: json["activations"] as? Int ?? -1
+            activations: json["activations"] as? Int ?? -1,
+            opacity: json["opacity"] as? Double ?? -1
         )
     }
 }
@@ -299,6 +301,19 @@ func click(_ target: String, expecting done: @escaping (Snapshot) -> Bool) -> Sn
     return result
 }
 
+let hitGrid = (0...6).flatMap { i in (0...4).map { j in (Double(i) / 6, Double(j) / 4) } }
+
+/// Asks the window server which window takes events at each point; it skips transparent pixels of a click-through window.
+/// Without a window-server connection of its own (NSApplication.shared) the query answers 0 everywhere.
+func missedHits(_ snapshot: Snapshot) -> [CGPoint] {
+    NSApplication.shared.setActivationPolicy(.prohibited)
+    let primaryHeight = CGDisplayBounds(CGMainDisplayID()).height
+    let area = snapshot.frame.insetBy(dx: 1, dy: 1)
+    return hitGrid.map { CGPoint(x: area.minX + area.width * $0.0, y: area.minY + area.height * $0.1) }.filter { point in
+        NSWindow.windowNumber(at: NSPoint(x: point.x, y: primaryHeight - point.y), belowWindowWithWindowNumber: 0) != snapshot.windowNumber
+    }
+}
+
 func charted(_ timeframe: String) -> (Snapshot) -> Bool {
     { $0.mode == "expanded" && $0.timeframe == timeframe && $0.chart == "loaded" && $0.candles == candlesKept[timeframe] }
 }
@@ -383,6 +398,21 @@ if let collapsed, let tickerHome {
         report("PASS", "reexpand", "reopened on 1m, the last chosen, and the saved settings hold timeframe m1")
     } else {
         report("FAIL", "reexpand", "\(describeChart(Snapshot.read())), saved timeframe m1: \(persisted)")
+    }
+    _ = click("ticker") { $0.mode == "collapsed" }
+
+    writeSettings(#"{"showLabel":true,"showChange":true,"decimals":0,"fontSize":15,"locked":true,"onlyWhenWoWActive":false,"opacity":0}"#)
+    let clear = waitFor(5) { Snapshot.read().flatMap { $0.opacity == 0 && $0.mode == "collapsed" ? $0 : nil } }
+    let clearExpanded = clear.flatMap { _ in click("ticker") { $0.mode == "expanded" && $0.opacity == 0 } }
+    let probes = [clear, clearExpanded].compactMap { $0.map { ($0.mode, $0.frame, missedHits($0)) } }
+    let missed = probes.filter { !$0.2.isEmpty }
+    if probes.count == 2, missed.isEmpty {
+        report("PASS", "opaque-to-clicks (window-server hit test, not HID)",
+               "at background opacity 0, NSWindow.windowNumber(at:) returns the overlay at all \(hitGrid.count) grid points of the collapsed \(describe(probes[0].1)) and expanded \(describe(probes[1].1)) panel")
+    } else {
+        report("FAIL", "opaque-to-clicks (window-server hit test, not HID)",
+               probes.count < 2 ? "opacity 0 edit or expand did not land: \(describeChart(Snapshot.read()))"
+                   : missed.map { "\($0.0) \(describe($0.1)): \($0.2.count)/\(hitGrid.count) points fall through, e.g. \($0.2.prefix(3))" }.joined(separator: "; "))
     }
     _ = click("ticker") { $0.mode == "collapsed" }
 

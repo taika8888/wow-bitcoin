@@ -21,6 +21,7 @@ public struct Snapshot: Codable, Hashable, Sendable {
     public var feed: String
     public var mode: String
     public var locked: Bool
+    public var opacity: Double
     public var visible: Bool
     public var windowNumber: Int
     public var frame: Frame
@@ -41,6 +42,7 @@ public struct Snapshot: Codable, Hashable, Sendable {
         feed = status.name
         mode = overlay.mode.name
         locked = overlay.settings.locked
+        opacity = overlay.settings.opacity
         visible = overlay.isVisible
         if case .expanded(let timeframe) = overlay.mode { self.timeframe = timeframe.spec.label }
         self.chart = chart?.name

@@ -13,6 +13,8 @@ final class OverlayPanel: NSPanel {
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
+        // Left at its default, the window server passes clicks on transparent pixels through to WoW; set explicitly, the whole frame takes them.
+        ignoresMouseEvents = false
         isMovable = false
         isReleasedWhenClosed = false
         animationBehavior = .none
