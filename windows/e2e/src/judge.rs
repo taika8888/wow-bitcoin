@@ -566,11 +566,15 @@ pub fn opaque_to_clicks(f: &OpaqueFacts) -> Verdict {
 pub struct SettingsWindowFacts {
     pub opened: bool,
     pub took_foreground: bool,
+    /// What WindowFromPoint found over the Show BTC label checkbox when it was not the checkbox.
+    pub covered_by: Option<String>,
     pub trackbars: usize,
     /// One per slider row and one alpha slider per color row of `FORM`.
     pub expected_trackbars: usize,
     /// Clicking the "Show BTC label" checkbox changed the stored settings and the ticker text.
     pub toggle_applied: bool,
+    /// The window still held the foreground just before WM_CLOSE, so handing it back is exercised.
+    pub kept_foreground: bool,
     pub closed: bool,
     pub foreground_returned: bool,
 }
@@ -597,6 +601,11 @@ pub fn settings_window(f: &SettingsWindowFacts) -> Verdict {
     if !f.took_foreground {
         wrong.push("the Settings window did not take the foreground".to_string());
     }
+    if let Some(cover) = &f.covered_by {
+        wrong.push(format!(
+            "it opened behind another window: WindowFromPoint over its checkbox found {cover}"
+        ));
+    }
     if f.trackbars != f.expected_trackbars {
         wrong.push(format!(
             "{} sliders, but FORM's slider and color rows need {}",
@@ -608,18 +617,23 @@ pub fn settings_window(f: &SettingsWindowFacts) -> Verdict {
             "clicking Show BTC label did not change the stored settings and the ticker".into(),
         );
     }
+    if !f.kept_foreground {
+        wrong.push(
+            "it lost the foreground before closing, so handing it back was not exercised".into(),
+        );
+    }
     if !f.closed {
         wrong.push("WM_CLOSE did not close it".into());
     }
-    if !f.foreground_returned {
+    if f.kept_foreground && !f.foreground_returned {
         wrong.push("closing it did not hand the foreground back to the stand-in".into());
     }
     Verdict::of(
         wrong.is_empty(),
         format!(
-            "opened from the overlay menu and took the foreground; {} sliders for FORM's slider and color rows; \
-             clicking Show BTC label changed the stored settings and the ticker; WM_CLOSE closed it and the \
-             stand-in got the foreground back",
+            "opened from the overlay menu on top of the topmost stand-in and took the foreground; {} sliders for \
+             FORM's slider and color rows; clicking Show BTC label changed the stored settings and the ticker; \
+             WM_CLOSE closed it and the stand-in got the foreground back",
             f.trackbars
         ),
         wrong.join("; "),

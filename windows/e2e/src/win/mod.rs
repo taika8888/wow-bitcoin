@@ -867,9 +867,11 @@ impl Harness<'_> {
             let verdict = judge::settings_window(&judge::SettingsWindowFacts {
                 opened: false,
                 took_foreground: false,
+                covered_by: None,
                 trackbars: 0,
                 expected_trackbars: judge::expected_trackbars(),
                 toggle_applied: false,
+                kept_foreground: false,
                 closed: false,
                 foreground_returned: false,
             });
@@ -890,10 +892,18 @@ impl Harness<'_> {
         let checkbox = controls
             .iter()
             .copied()
-            .find(|&h| os::text_of(h) == "Show BTC label")
-            .and_then(os::window_rect);
-        let toggle_applied = checkbox.is_some_and(|r| {
-            os::click(center(&r).0, center(&r).1, Button::Left).is_ok()
+            .find(|&h| os::text_of(h) == "Show BTC label");
+        let spot = checkbox.and_then(os::window_rect).map(|r| center(&r));
+        let covered_by = match (checkbox, spot) {
+            (Some(checkbox), Some((x, y))) => {
+                let found = os::window_at(x, y);
+                (found != checkbox)
+                    .then(|| format!("{} of pid {}", os::class_of(found), os::pid_of(found)))
+            }
+            _ => Some("nothing: there is no Show BTC label checkbox".into()),
+        };
+        let toggle_applied = spot.is_some_and(|(x, y)| {
+            os::click(x, y, Button::Left).is_ok()
                 && self
                     .wait(5.0, |s| {
                         judge::parse_ticker(&s.text).is_some_and(|t| !t.label)
@@ -901,6 +911,7 @@ impl Harness<'_> {
                     .is_some()
                 && os::read_settings().is_some_and(|s| s.contains(r#""showLabel":false"#))
         });
+        let kept_foreground = os::foreground() == window;
         // SAFETY: posts to a window of the app's; a stale handle fails harmlessly.
         let _ = unsafe { PostMessageW(Some(window), WM_CLOSE, WPARAM(0), LPARAM(0)) };
         let closed = wait_until(3.0, || (!os::visible(window)).then_some(())).is_some();
@@ -909,9 +920,11 @@ impl Harness<'_> {
         let verdict = judge::settings_window(&judge::SettingsWindowFacts {
             opened: true,
             took_foreground,
+            covered_by,
             trackbars,
             expected_trackbars: judge::expected_trackbars(),
             toggle_applied,
+            kept_foreground,
             closed,
             foreground_returned,
         });

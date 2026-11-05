@@ -32,8 +32,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IDCANCEL, IsWindow, NONCLIENTMETRICSW, RegisterClassW, SPI_GETNONCLIENTMETRICS, SW_SHOW,
     SWP_NOACTIVATE, SWP_NOZORDER, SendMessageW, SetForegroundWindow, SetWindowPos, SetWindowTextW,
     ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_DESTROY, WM_DPICHANGED,
-    WM_DRAWITEM, WM_HSCROLL, WM_SETFONT, WM_VSCROLL, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_GROUP,
-    WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    WM_DRAWITEM, WM_HSCROLL, WM_SETFONT, WM_VSCROLL, WNDCLASSW, WS_CAPTION, WS_CHILD,
+    WS_EX_TOPMOST, WS_GROUP, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
 };
 use windows::core::{HSTRING, PCWSTR, w};
 
@@ -41,6 +41,9 @@ use windows::core::{HSTRING, PCWSTR, w};
 const TBM_GETPOS: u32 = windows::Win32::UI::WindowsAndMessaging::WM_USER;
 
 const STYLE: WINDOW_STYLE = WINDOW_STYLE(WS_OVERLAPPED.0 | WS_CAPTION.0 | WS_SYSMENU.0);
+/// Topmost, like macOS's full-screen-auxiliary Settings window: a borderless game is often topmost itself, and a
+/// Settings window behind it would take the keyboard from the game while nobody can see it.
+const EX_STYLE: WINDOW_EX_STYLE = WS_EX_TOPMOST;
 
 /// Row geometry in DIPs, multiplied by the window's DPI / 96.
 const MARGIN: i32 = 14;
@@ -112,7 +115,7 @@ pub(super) fn open() {
                 ..Default::default()
             });
             CreateWindowExW(
-                WINDOW_EX_STYLE(0),
+                EX_STYLE,
                 w!("BTCTickerSettings"),
                 w!("BTC Ticker Settings"),
                 STYLE,
@@ -441,7 +444,7 @@ fn build(hwnd: HWND, origin: Option<(i32, i32)>) {
         bottom: y + px(MARGIN),
     };
     // SAFETY: `frame` is valid for the call; style and DPI describe our window.
-    let _ = unsafe { AdjustWindowRectExForDpi(&mut frame, STYLE, false, WINDOW_EX_STYLE(0), dpi) };
+    let _ = unsafe { AdjustWindowRectExForDpi(&mut frame, STYLE, false, EX_STYLE, dpi) };
     let (width, height) = (frame.right - frame.left, frame.bottom - frame.top);
     let (x, y) = origin.unwrap_or_else(|| {
         let mut info = MONITORINFO {

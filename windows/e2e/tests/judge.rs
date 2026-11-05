@@ -694,24 +694,36 @@ mod scenarios {
     #[test]
     fn the_settings_window_has_a_slider_per_slider_and_color_row() {
         assert_eq!(judge::expected_trackbars(), 7);
-        let good = SettingsWindowFacts {
+        let good = || SettingsWindowFacts {
             opened: true,
             took_foreground: true,
+            covered_by: None,
             trackbars: 7,
             expected_trackbars: 7,
             toggle_applied: true,
+            kept_foreground: true,
             closed: true,
             foreground_returned: true,
         };
-        assert!(judge::settings_window(&good).passed());
-        let kept = SettingsWindowFacts {
+        assert!(judge::settings_window(&good()).passed());
+        let returned_elsewhere = SettingsWindowFacts {
             foreground_returned: false,
-            ..good
+            ..good()
         };
-        assert_eq!(judge::settings_window(&kept).status(), "FAIL");
+        assert_eq!(judge::settings_window(&returned_elsewhere).status(), "FAIL");
+        let behind = SettingsWindowFacts {
+            covered_by: Some("BTCTickerE2EStandin".into()),
+            ..good()
+        };
+        assert_eq!(judge::settings_window(&behind).status(), "FAIL");
+        let lost = SettingsWindowFacts {
+            kept_foreground: false,
+            ..good()
+        };
+        assert_eq!(judge::settings_window(&lost).status(), "FAIL");
         let missing_alpha = SettingsWindowFacts {
             trackbars: 4,
-            ..good
+            ..good()
         };
         assert_eq!(judge::settings_window(&missing_alpha).status(), "FAIL");
     }
