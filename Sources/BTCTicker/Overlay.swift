@@ -1,5 +1,4 @@
 import AppKit
-import SwiftUI
 import TickerCore
 
 /// Borderless, non-activating, above a maximized game window, and never key, so WoW keeps keyboard focus.
@@ -195,15 +194,7 @@ final class OverlayView: NSView {
     /// Trackpad scroll or pinch gathered toward the next zoom step, in steps.
     private var zoomTravel = 0.0
     private let padding = NSSize(width: 10, height: 4)
-    private let chartHost = NSHostingView(rootView: CandleChartView())
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        chartHost.isHidden = true
-        addSubview(chartHost)
-    }
-
-    required init?(coder: NSCoder) { fatalError("not used") }
+    private var chartView: CandleChartView?
 
     /// Returns the size of the ticker line, which is the whole overlay while collapsed.
     func show(_ display: TickerDisplay, settings: TickerCore.Settings) -> NSSize {
@@ -237,20 +228,24 @@ final class OverlayView: NSView {
 
     func expand(_ layout: ExpandedLayout, timeframe: Timeframe, chart: CandleChart?, notice: ChartNotice?) {
         expanded = (layout, timeframe)
-        chartHost.frame = layout.chart
-        chartHost.isHidden = false
-        chartHost.rootView = CandleChartView(
-            chart: chart,
-            notice: notice,
-            settings: settings,
-            bodyWidth: max(1, layout.plotWidth / Double(max(chart?.bars.count ?? 1, 1)) * 0.7)
-        )
+        let chartView = self.chartView ?? CandleChartView()
+        if self.chartView == nil {
+            addSubview(chartView)
+            self.chartView = chartView
+        }
+        chartView.frame = layout.chart
+        chartView.chart = chart
+        chartView.notice = notice
+        chartView.settings = settings
+        chartView.bodyWidth = max(1, layout.plotWidth / Double(max(chart?.bars.count ?? 1, 1)) * 0.7)
+        chartView.needsDisplay = true
         needsDisplay = true
     }
 
     func collapse() {
         expanded = nil
-        chartHost.isHidden = true
+        chartView?.removeFromSuperview()
+        chartView = nil
         needsDisplay = true
     }
 
@@ -287,7 +282,7 @@ final class OverlayView: NSView {
         }
     }
 
-    /// The chart is drawn by a hosted SwiftUI view, but every click and drag belongs to this view.
+    /// The chart is drawn by a subview, but every click, drag and scroll belongs to this view.
     override func hitTest(_ point: NSPoint) -> NSView? {
         super.hitTest(point) == nil ? nil : self
     }

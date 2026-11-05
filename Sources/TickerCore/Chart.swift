@@ -109,7 +109,7 @@ public struct ChartFeed: Hashable, Sendable {
     }
 }
 
-/// What the chart view draws. Swift Charts owns scales and axes; this owns which values go in them.
+/// What the chart view draws, in prices and times; the view maps them onto its plot.
 public struct CandleChart: Hashable, Sendable {
     public struct Bar: Hashable, Sendable {
         /// The middle of the candle's interval, so bars sit between interval boundaries.
@@ -173,5 +173,32 @@ public struct CandleChart: Hashable, Sendable {
                 tone: candle.close > candle.open ? .up : candle.close < candle.open ? .down : .neutral
             )
         }
+    }
+}
+
+extension CandleChart {
+    /// The fewest gridlines an axis gets; the next coarser step would leave fewer, so an axis gets 3 to 8, mostly 3 to 5.
+    public static let minimumTicks = 3.0
+    static let timeSteps: [TimeInterval] = [1, 2, 5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880, 5760, 10080, 20160, 43200].map { $0 * 60 }
+
+    /// Multiples of a 1, 2 or 5 step inside the price domain.
+    public var priceTicks: [Double] {
+        let span = priceDomain.upperBound - priceDomain.lowerBound
+        guard span > 0 else { return [] }
+        let magnitude = pow(10, log10(span / Self.minimumTicks).rounded(.down))
+        return Self.ticks(in: priceDomain, steps: [1, 2, 5].map { $0 * magnitude })
+    }
+
+    /// Round local times inside the time domain, `utcOffset` seconds east of UTC.
+    public func timeTicks(utcOffset: Int) -> [Date] {
+        let range = timeDomain.lowerBound.timeIntervalSince1970...timeDomain.upperBound.timeIntervalSince1970
+        return Self.ticks(in: range, steps: Self.timeSteps, offset: Double(utcOffset)).map(Date.init(timeIntervalSince1970:))
+    }
+
+    private static func ticks(in range: ClosedRange<Double>, steps: [Double], offset: Double = 0) -> [Double] {
+        let span = range.upperBound - range.lowerBound
+        guard span > 0, let step = steps.last(where: { span / $0 >= minimumTicks }) ?? steps.first else { return [] }
+        let first = ((range.lowerBound + offset) / step).rounded(.up) * step - offset
+        return Array(stride(from: first, through: range.upperBound, by: step))
     }
 }
