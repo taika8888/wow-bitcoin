@@ -7,8 +7,11 @@
 mod desktop;
 mod standin;
 mod ticker;
+mod verdict;
 
+use std::cell::OnceCell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use serde_json::{Value, json};
 use windows::Win32::Foundation::{HWND, POINT};
@@ -17,6 +20,7 @@ use windows::Win32::UI::WindowsAndMessaging::{WS_EX_LAYERED, WS_EX_NOACTIVATE, W
 use desktop::{Mouse, Rect};
 use standin::StandIn;
 use ticker::{Snapshot, Ticker, wait_until};
+use verdict::Verdicts;
 
 const KRAKEN_TICKER: &str = "https://api.kraken.com/0/public/Ticker?pair=XBTUSD";
 const MENU_CLASS: &str = "BTCTickerMenu";
@@ -44,7 +48,7 @@ fn main() {
     };
     let mut report = Report::default();
     run(&mut report, Path::new(app), Path::new(shots), args.get(3).map(PathBuf::from));
-    std::process::exit(if report.failures == 0 { 0 } else { 1 });
+    std::process::exit(if report.verdicts.failures() == 0 { 0 } else { 1 });
 }
 
 pub fn wide(text: &str) -> Vec<u16> {
@@ -53,19 +57,23 @@ pub fn wide(text: &str) -> Vec<u16> {
 
 #[derive(Default)]
 struct Report {
-    failures: u32,
+    verdicts: Verdicts,
+    /// The first input the check saw but did not send. The mouse sets it, and every verdict after it goes through it.
+    disturbance: Rc<OnceCell<String>>,
 }
 
 impl Report {
     fn line(&mut self, status: &str, name: &str, detail: impl AsRef<str>) {
-        println!("{status:<12} e2e-{name}  ({})", detail.as_ref());
-        if status != "PASS" {
-            self.failures += 1;
-        }
+        let disturbance = self.disturbance.get().map(String::as_str);
+        println!("{}", self.verdicts.check(status, name, detail.as_ref(), disturbance));
     }
 
     fn check(&mut self, passed: bool, name: &str, detail: impl AsRef<str>) {
         self.line(if passed { "PASS" } else { "FAIL" }, name, detail);
+    }
+
+    fn teardown(&mut self, passed: bool, name: &str, detail: impl AsRef<str>) {
+        println!("{}", self.verdicts.teardown(if passed { "PASS" } else { "FAIL" }, name, detail.as_ref()));
     }
 }
 
@@ -177,7 +185,8 @@ fn run(report: &mut Report, app: &Path, shots: &Path, pid_file: Option<PathBuf>)
     if let Some(pid_file) = &pid_file {
         let _ = std::fs::write(pid_file, ticker.pid.to_string());
     }
-    let mut session = Session { ticker, game, mouse: Mouse::new(tag), gestures: Vec::new(), landed: 0 };
+    let mouse = Mouse::new(tag, Rc::clone(&report.disturbance));
+    let mut session = Session { ticker, game, mouse, gestures: Vec::new(), landed: 0 };
     let launched_in_front = wait_until(1.0, || session.ticker.snapshot()).is_some();
     session.gestures.push(("launch".to_string(), true, desktop::foreground() == session.game.hwnd));
     if !launched_in_front && session.ticker.wait_for(10.0, |_| true).is_none() {
@@ -198,19 +207,24 @@ fn run(report: &mut Report, app: &Path, shots: &Path, pid_file: Option<PathBuf>)
     settings_window(report, &mut session, shots);
     quit(report, &mut session);
 
+    let killed = if session.ticker.stop() {
+        format!("killed pid {}, which had not quit; ", session.ticker.pid)
+    } else {
+        String::new()
+    };
     let leftovers = desktop::processes_running(&session.ticker.exe);
-    report.check(
+    report.teardown(
         leftovers.is_empty(),
         "no-leftovers",
         if leftovers.is_empty() {
-            format!("no process runs {}", session.ticker.exe.display())
+            format!("{killed}no process runs {}", session.ticker.exe.display())
         } else {
-            format!("still running {}: pids {leftovers:?}", session.ticker.exe.display())
+            format!("{killed}still running {}: pids {leftovers:?}", session.ticker.exe.display())
         },
     );
     let untouched =
         user_settings.as_ref().ok().map(std::fs::read).map(|now| now.ok()) == user_settings_before.map(Result::ok);
-    report.check(
+    report.teardown(
         untouched,
         "user-settings-untouched",
         format!(
@@ -868,11 +882,13 @@ fn focus(report: &mut Report, session: &Session) {
     match foreign {
         0 => report.line("PASS", "undisturbed", "the overlay received only the presses this check sent"),
         u32::MAX => report.line("FAIL", "undisturbed", "no snapshot"),
-        _ => report.line(
-            "INCONCLUSIVE",
-            "undisturbed",
-            format!("the overlay received {foreign} presses this check did not send, so someone clicked it during the run; rerun"),
-        ),
+        _ => {
+            let seen = format!(
+                "the overlay received {foreign} presses this check did not send, so someone clicked it during the run"
+            );
+            let _ = report.disturbance.set(seen.clone());
+            report.line("INCONCLUSIVE", "undisturbed", seen);
+        }
     }
 }
 
@@ -930,7 +946,7 @@ fn quit(report: &mut Report, session: &mut Session) {
         let row = Session::menu_row(menu, 2.0);
         session.mouse.click(row, false, &session.allowed())
     });
-    let status = session.ticker.exited_within(10.0);
+    let status = chosen.is_ok().then(|| session.ticker.exited_within(10.0)).flatten();
     report.check(
         chosen.is_ok() && status.is_some_and(|status| status.success()),
         "quit",

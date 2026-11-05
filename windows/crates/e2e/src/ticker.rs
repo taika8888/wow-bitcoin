@@ -88,14 +88,21 @@ impl Ticker {
     pub fn exited_within(&mut self, seconds: f64) -> Option<ExitStatus> {
         wait_until(seconds, || self.child.try_wait().ok().flatten())
     }
+
+    /// Kills the app if it is still running, and says whether it had to.
+    pub fn stop(&mut self) -> bool {
+        let running = matches!(self.child.try_wait(), Ok(None));
+        if running {
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+        running
+    }
 }
 
 impl Drop for Ticker {
     fn drop(&mut self) {
-        if matches!(self.child.try_wait(), Ok(None)) {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
+        self.stop();
     }
 }
 
