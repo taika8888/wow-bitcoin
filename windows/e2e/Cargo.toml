@@ -1,0 +1,20 @@
+[package]
+name = "btc-ticker-e2e"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "End-to-end check of the built btc-ticker.exe on a real Windows desktop. The verdict logic is a library tested on any OS; the binary gathers facts with Win32."
+
+[dependencies]
+ticker-core.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+png.workspace = true
+
+[dev-dependencies]
+ticker-paint.workspace = true
+
+[lints]
+workspace = true
