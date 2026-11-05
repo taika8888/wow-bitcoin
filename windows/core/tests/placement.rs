@@ -1,5 +1,3 @@
-//! Port of PlacementTests.swift and the ExpandedLayout cases of ChartTests.swift, in Windows coordinates: y grows
-//! down and the work area excludes the taskbar.
 use ticker_core::{
     ExpandedLayout, Point, Rect, ScreenArea, ScreenPoint, Size, Timeframe, placement,
 };
@@ -13,8 +11,6 @@ fn rect(x: f64, y: f64, width: f64, height: f64) -> Rect {
     }
 }
 
-/// A laptop panel with a 48 px taskbar at the bottom, and a taller external display to its right whose top sits
-/// 200 px above the laptop's, with its taskbar at the bottom too.
 fn laptop() -> ScreenArea {
     ScreenArea {
         frame: rect(0.0, 0.0, 1728.0, 1117.0),

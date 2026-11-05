@@ -1,6 +1,5 @@
-//! The reducer the model check walks: Overlay.swift plus `menu_open`. macOS gets a non-activating context menu from
-//! AppKit; on Windows TrackPopupMenu needs its owner in the foreground, which would take focus from the game, so the
-//! menu is drawn inside the overlay and its rules live here where the model check covers them.
+//! Overlay.swift plus `menu_open`. On Windows TrackPopupMenu needs its owner in the foreground, which would take
+//! focus from the game, so the menu is drawn inside the overlay and its rules live in this reducer.
 use crate::market::Timeframe;
 use crate::settings::{ScreenPoint, Settings};
 
@@ -95,7 +94,7 @@ pub enum PressTarget {
     Outside,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct OverlayState {
     pub settings: Settings,
     pub frontmost: Frontmost,

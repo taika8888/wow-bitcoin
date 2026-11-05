@@ -271,8 +271,6 @@ mod feed_status {
         assert_eq!(FeedSchedule::delay(120, 3), 120.0);
     }
 
-    /// The feed loop's rule (a request starts at `next_start`, never before the previous one ended) run through
-    /// good, failed, good, sampling the status every 100 ms in between.
     #[test]
     fn one_failed_request_never_shows_the_quote_as_stale() {
         for refresh_seconds in [2, 5, 30, 300] {

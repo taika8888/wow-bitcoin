@@ -1,5 +1,3 @@
-//! Pixel properties of what Windows will show, checked on frames built by driving `ticker_core::App` with the
-//! recorded Kraken fixtures. Every render is also written as a PNG under the test tmpdir for review.
 use std::collections::BTreeSet;
 use ticker_core::{
     App, Draw, Env, Frame, Frontmost, HttpReply, Input, KrakenError, Measure, PointerInput, Rect,
@@ -75,8 +73,6 @@ impl<'f> Scenes<'f> {
     }
 }
 
-/// Collapsed, loading chart, each timeframe with candles, the menu, stale candles and a failure placeholder,
-/// at opacity 0 and 1 and at monitor scales 1 and 1.5.
 fn scenes(fonts: &Fonts) -> Vec<(String, Frame)> {
     let mut all = Vec::new();
     for opacity in [0.0, 1.0] {

@@ -219,8 +219,7 @@ impl CandleChart {
     }
 }
 
-/// Swift Charts chose the axis values on macOS. Multiples of a nice step (1, 2, 2.5 or 5 times a power of ten)
-/// strictly inside `domain`, about `desired` of them.
+/// Multiples of a nice step (1, 2, 2.5 or 5 times a power of ten) strictly inside `domain`, about `desired` of them.
 pub fn axis_ticks(domain: (f64, f64), desired: usize) -> Vec<f64> {
     let span = domain.1 - domain.0;
     if span.is_nan() || span <= 0.0 || desired == 0 {

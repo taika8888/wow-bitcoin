@@ -7,6 +7,8 @@ use tiny_skia::{Color, FillRule, Paint, PathBuilder, Pixmap, Stroke, StrokeDash,
 /// to the game. Every pixel of the window gets at least this alpha, which is invisible.
 pub const HIT_FLOOR_ALPHA: u8 = 1;
 
+const QUARTER_CIRCLE_BEZIER_K: f32 = 0.552_284_8;
+
 /// The one embedded font. Grayscale coverage only: ClearType cannot work on a per-pixel-alpha window.
 pub struct Fonts {
     font: fontdue::Font,
@@ -140,8 +142,7 @@ fn round_rect(rect: &Rect, radius: f64) -> Option<tiny_skia::Path> {
             x, y, w, h,
         )?));
     }
-    // Cubic Bezier control-point distance that best approximates a quarter circle.
-    let k = r * 0.552_284_8;
+    let k = r * QUARTER_CIRCLE_BEZIER_K;
     let mut path = PathBuilder::new();
     path.move_to(x + r, y);
     path.line_to(x + w - r, y);
@@ -190,8 +191,6 @@ fn line(
     pixmap.stroke_path(&path, &solid(color), &stroke, Transform::identity(), None);
 }
 
-/// Composites glyph coverage source-over in premultiplied RGBA. Each glyph's origin snaps to a whole pixel, so
-/// tabular digits keep their exact shapes from one refresh to the next.
 fn text_run(
     pixmap: &mut Pixmap,
     fonts: &Fonts,

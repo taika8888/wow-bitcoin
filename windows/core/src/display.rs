@@ -87,8 +87,8 @@ pub fn format_change(fraction: f64) -> (String, Tone) {
     }
 }
 
-/// Rounds the shortest decimal form of `value` (what Swift's format style rounds), not its binary expansion:
-/// 80482.45 is stored as 80482.4499..., and `format!("{:.1}")` would print 80482.4 where the Swift tests want 80482.5.
+/// Rounds the shortest decimal form of `value`, not its binary expansion: 80482.45 is stored as 80482.4499...,
+/// which `format!("{:.1}")` prints as 80482.4.
 fn fixed(value: f64, decimals: usize, grouping: bool) -> String {
     let shortest = format!("{value}");
     let (whole, fraction) = shortest.split_once('.').unwrap_or((&shortest, ""));

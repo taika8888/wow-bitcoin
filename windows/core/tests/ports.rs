@@ -1,6 +1,3 @@
-//! Every Swift test in Tests/TickerCoreTests has a Rust test of the same name in snake case, so a test added on
-//! macOS fails here until it is ported or listed in `NOT_PORTED` with its reason.
-
 const SWIFT: &[(&str, &str)] = &[
     (
         "ChartTests.swift",
@@ -34,8 +31,12 @@ const RUST: &[&str] = &[
     include_str!("settings_form.rs"),
 ];
 
-/// Swift test name, and why it has no Rust counterpart.
-const NOT_PORTED: &[(&str, &str)] = &[];
+struct NotPorted {
+    swift_test: &'static str,
+    reason: &'static str,
+}
+
+const NOT_PORTED: &[NotPorted] = &[];
 
 fn swift_tests(source: &str) -> Vec<String> {
     let mut names = Vec::new();
@@ -52,7 +53,6 @@ fn swift_tests(source: &str) -> Vec<String> {
     names
 }
 
-/// camelCase to snake_case, keeping acronyms whole: "isAnAPIError" becomes "is_an_api_error".
 fn snake(name: &str) -> String {
     let chars: Vec<char> = name.chars().collect();
     let mut out = String::new();
@@ -91,7 +91,7 @@ fn every_swift_test_has_a_rust_counterpart() {
             total += 1;
             let wanted = names.iter().filter(|n| *n == name).count();
             let found = rust.matches(&format!("fn {}(", snake(name))).count();
-            let excused = NOT_PORTED.iter().any(|(n, _)| n == name);
+            let excused = NOT_PORTED.iter().any(|e| e.swift_test == name);
             if found < wanted && !excused {
                 missing.push(format!("{file}: {name} -> fn {}", snake(name)));
             }
@@ -112,7 +112,12 @@ fn every_swift_test_has_a_rust_counterpart() {
 #[test]
 fn every_exception_names_a_real_swift_test() {
     let all: Vec<String> = SWIFT.iter().flat_map(|(_, s)| swift_tests(s)).collect();
-    for (name, _) in NOT_PORTED {
-        assert!(all.iter().any(|n| n == name), "{name} is not a Swift test");
+    for exception in NOT_PORTED {
+        assert!(
+            all.iter().any(|n| n == exception.swift_test),
+            "{} is not a Swift test ({})",
+            exception.swift_test,
+            exception.reason
+        );
     }
 }

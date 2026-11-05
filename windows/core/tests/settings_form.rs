@@ -9,7 +9,6 @@ fn keys(settings: &Settings) -> Map<String, Value> {
     }
 }
 
-/// Every key `Settings` writes has exactly one FORM row, except `timeframe`, which is chosen on the chart.
 #[test]
 fn form_covers_every_key() {
     let full = Settings {
@@ -27,7 +26,6 @@ fn form_covers_every_key() {
     assert_eq!(written, unique);
 }
 
-/// The macOS key set, written out once as the cross-platform contract.
 #[test]
 fn keys_match_macos() {
     let mac = [
@@ -53,7 +51,6 @@ fn keys_match_macos() {
     assert_eq!(written, mac, "position is omitted when nil, as on macOS");
 }
 
-/// Each row's control edits its own key and no other, with a value that survives the decode clamps.
 #[test]
 fn each_row_edits_only_its_key() {
     let start = Settings {

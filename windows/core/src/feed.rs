@@ -46,8 +46,7 @@ pub struct FeedSchedule {
 }
 
 impl FeedSchedule {
-    /// Capped at the interval: with the cadence anchored on starts, a good quote, a failure and a good retry then
-    /// land within three intervals, so one failure never reaches the stale threshold.
+    /// At most 10 s and never longer than the refresh interval.
     pub fn request_timeout(refresh_seconds: u32) -> f64 {
         f64::min(10.0, refresh_seconds.into())
     }
@@ -60,7 +59,6 @@ impl FeedSchedule {
         self.failures = if ok { 0 } else { self.failures + 1 };
     }
 
-    /// Failures from before a sleep say nothing about the network after it.
     pub fn woke(&mut self) {
         self.failures = 0;
     }

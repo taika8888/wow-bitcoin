@@ -1,6 +1,4 @@
 #!/usr/bin/env bash
-# Everything that can fail on the Mac fails here, before a billed Windows minute.
-# One PASS/FAIL line per step; exit 0 only when every line is PASS.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 failed=0

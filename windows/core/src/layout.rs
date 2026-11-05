@@ -1,6 +1,5 @@
 //! Geometry in Windows virtual-screen physical pixels, top-left origin, y down. Per-monitor DPI is the `scale` of
-//! each `ScreenArea`. Port of Layout.swift with every vertical comparison flipped, so "top center" and "opens toward
-//! the middle" keep their meaning.
+//! each `ScreenArea`.
 use crate::market::Timeframe;
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -153,7 +152,7 @@ pub mod placement {
 
     /// The saved origin kept whole inside the work area of the screen it overlaps most, or the top center of the
     /// primary screen (`screens[0]`; WoW keeps its minimap and buffs top right) when nothing is saved or the saved
-    /// spot is on no screen. Called on load, after a drop and on every resize, so all three clamp the same way.
+    /// spot is on no screen.
     pub fn frame(saved: Option<ScreenPoint>, size: Size, screens: &[ScreenArea]) -> Rect {
         if let Some(saved) = saved {
             let rect = Rect::new(

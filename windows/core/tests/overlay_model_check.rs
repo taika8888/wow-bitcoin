@@ -1,8 +1,3 @@
-//! Port of OverlayModelCheckTests.swift: breadth-first over every state the reducer can reach under every event,
-//! checking every invariant on every transition, plus the menu rules Windows adds.
-//!
-//! The checker takes the reducer as a parameter, and `MUTANTS` holds one deliberately broken reducer per invariant,
-//! so each invariant is shown to fail, and adding an invariant without a mutant fails `every_invariant_has_a_mutant`.
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use ticker_core::{
     DragPhase, Frontmost, MenuItem, OverlayEvent, OverlayMode, OverlayState, PressTarget,
@@ -11,14 +6,37 @@ use ticker_core::{
 
 type Reduce = fn(&OverlayState, &OverlayEvent) -> OverlayState;
 
-/// The reducer's state plus the checker's own records, kept outside the reducer so invariants compare two sources.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq)]
 struct World {
     state: OverlayState,
-    /// Which app the OS last activated, per the events, not per the reducer.
     frontmost: Frontmost,
-    /// The button went down on a visible, locked overlay with only pointer moves since.
     locked_press: bool,
+}
+
+/// Visited-set key. Settings are keyed by their JSON, which covers every field and is exact for floats.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct Key {
+    settings: String,
+    frontmost: Frontmost,
+    mode: OverlayMode,
+    drag: DragPhase,
+    menu_open: bool,
+    recorded_frontmost: Frontmost,
+    locked_press: bool,
+}
+
+impl World {
+    fn key(&self) -> Key {
+        Key {
+            settings: serde_json::to_string(&self.state.settings).unwrap(),
+            frontmost: self.state.frontmost,
+            mode: self.state.mode,
+            drag: self.state.drag,
+            menu_open: self.state.menu_open,
+            recorded_frontmost: self.frontmost,
+            locked_press: self.locked_press,
+        }
+    }
 }
 
 struct Invariant {
@@ -283,7 +301,6 @@ static INVARIANTS: &[Invariant] = &[
 struct Exploration {
     reached: Vec<World>,
     transitions: usize,
-    /// Invariant name -> the shortest event trace that broke it (BFS order makes it shortest).
     violations: BTreeMap<&'static str, Vec<OverlayEvent>>,
 }
 
@@ -306,14 +323,14 @@ fn explore(reduce: Reduce) -> Exploration {
         }
     }
     let mut queue: VecDeque<World> = initial.iter().cloned().collect();
-    let mut seen: HashSet<World> = initial.into_iter().collect();
-    let mut parent: HashMap<World, (World, OverlayEvent)> = HashMap::new();
+    let mut seen: HashSet<Key> = initial.iter().map(World::key).collect();
+    let mut parent: HashMap<Key, (World, OverlayEvent)> = HashMap::new();
     let mut reached = Vec::new();
     let mut violations = BTreeMap::new();
     let mut transitions = 0;
-    let path = |parent: &HashMap<World, (World, OverlayEvent)>, mut w: World| {
+    let path = |parent: &HashMap<Key, (World, OverlayEvent)>, mut w: World| {
         let mut trace = Vec::new();
-        while let Some((prev, e)) = parent.get(&w) {
+        while let Some((prev, e)) = parent.get(&w.key()) {
             trace.push(e.clone());
             w = prev.clone();
         }
@@ -347,8 +364,9 @@ fn explore(reduce: Reduce) -> Exploration {
                     violations.insert(inv.name, trace);
                 }
             }
-            if seen.insert(next.clone()) {
-                parent.insert(next.clone(), (world.clone(), event.clone()));
+            let key = next.key();
+            if seen.insert(key.clone()) {
+                parent.insert(key, (world.clone(), event.clone()));
                 queue.push_back(next);
             }
         }
@@ -418,11 +436,10 @@ fn every_reachable_transition_keeps_the_invariants() {
     );
 }
 
-/// One deliberately broken reducer per invariant: the real one with a single behavior bent.
 struct Mutant {
     breaks: &'static str,
-    /// Invariants the same bug must also break, because together they imply `breaks`.
-    also_breaks: &'static [&'static str],
+    /// Each with the reason the same bug must break it too.
+    also_breaks: &'static [(&'static str, &'static str)],
     reduce: Reduce,
 }
 
@@ -435,8 +452,10 @@ fn press_released(s: &OverlayState, e: &OverlayEvent, over: PressTarget) -> bool
 static MUTANTS: &[Mutant] = &[
     Mutant {
         breaks: LOCKED_NEVER_DRAGS,
-        // Releasing a locked drag must store the drop point and must not move a locked overlay.
-        also_breaks: &[LOCKED_STAYS],
+        also_breaks: &[(
+            LOCKED_STAYS,
+            "releasing a locked drag must store the drop point and must not move a locked overlay",
+        )],
         reduce: |s, e| {
             let mut n = reduce(s, e);
             if matches!(e, OverlayEvent::ToggleLock) && s.drag == DragPhase::Dragging {
@@ -541,8 +560,10 @@ static MUTANTS: &[Mutant] = &[
     },
     Mutant {
         breaks: EXPANDED_IS_PERSISTED,
-        // A visible expanded state off the persisted choice cannot collapse and come back to itself.
-        also_breaks: &[ROUND_TRIP],
+        also_breaks: &[(
+            ROUND_TRIP,
+            "a visible chart off the persisted choice cannot collapse and come back to itself",
+        )],
         reduce: |s, e| {
             let mut n = reduce(s, e);
             let picked = Timeframe::ALL
@@ -601,8 +622,10 @@ static MUTANTS: &[Mutant] = &[
     },
     Mutant {
         breaks: LOCKED_STAYS,
-        // A locked overlay never drags, so moving it on a release is a move without a drag.
-        also_breaks: &[ONLY_DRAG_MOVES],
+        also_breaks: &[(
+            ONLY_DRAG_MOVES,
+            "a locked overlay never drags, so moving it on a release is a move without a drag",
+        )],
         reduce: |s, e| {
             let mut n = reduce(s, e);
             if let OverlayEvent::Released { ticker_origin, .. } = e
@@ -648,8 +671,10 @@ static MUTANTS: &[Mutant] = &[
     },
     Mutant {
         breaks: MENU_NO_DRAG,
-        // Releasing a drag with the menu open must both store the drop point and leave the position alone.
-        also_breaks: &[DROP_STORES],
+        also_breaks: &[(
+            DROP_STORES,
+            "releasing a drag with the menu open must both store the drop point and keep the position",
+        )],
         reduce: |s, e| {
             let mut n = reduce(s, e);
             if matches!(e, OverlayEvent::PointerMoved { distance } if *distance >= 3.0)
@@ -716,11 +741,12 @@ fn every_mutant_breaks_exactly_its_invariant() {
         .filter_map(|mutant| {
             let broken: BTreeSet<&str> = explore(mutant.reduce).violations.into_keys().collect();
             let expected: BTreeSet<&str> = std::iter::once(mutant.breaks)
-                .chain(mutant.also_breaks.iter().copied())
+                .chain(mutant.also_breaks.iter().map(|(name, _)| *name))
                 .collect();
+            let reasons: Vec<&str> = mutant.also_breaks.iter().map(|(_, why)| *why).collect();
             (broken != expected).then(|| {
                 format!(
-                    "mutant for '{}' broke {broken:?}, expected {expected:?}",
+                    "mutant for '{}' broke {broken:?}, expected {expected:?} because {reasons:?}",
                     mutant.breaks
                 )
             })

@@ -1,4 +1,3 @@
-//! Fixtures are the recorded Kraken responses next to the Swift tests, read in place so both platforms share them.
 #![allow(dead_code)]
 
 pub const TICKER: &[u8] =
@@ -12,7 +11,6 @@ pub const OHLC_240: &[u8] =
 
 use ticker_core::{Measure, TextStyle};
 
-/// Fixed-pitch metrics, so expected sizes are arithmetic: every char is 0.6 em wide and a line is 1.25 em.
 pub struct FakeMeasure;
 
 impl Measure for FakeMeasure {

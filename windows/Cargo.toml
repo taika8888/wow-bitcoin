@@ -24,6 +24,8 @@ lto = "thin"
 codegen-units = 1
 panic = "abort"
 
-# The model check walks the reducer once plus once per mutant.
+# The model check serializes every state it visits, once per mutant too.
+[profile.dev.package."*"]
+opt-level = 2
 [profile.dev.package.ticker-core]
 opt-level = 2

@@ -94,7 +94,6 @@ pub struct ShellFacts {
     pub tray_icon: bool,
 }
 
-/// A left press on the overlay, from LeftDown until the reducer's drag phase is idle again.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Gesture {
     press: Point,
@@ -120,8 +119,7 @@ pub struct App<M: Measure> {
     quote_in_flight: bool,
     charts: ChartFeed,
     gesture: Option<Gesture>,
-    /// The last frame presented, the one pointer input is hit-tested against.
-    shown: Option<Frame>,
+    presented: Option<Frame>,
     snapshot_seq: u64,
     measure: M,
 }
@@ -141,13 +139,12 @@ impl<M: Measure> App<M> {
             quote_in_flight: false,
             charts: ChartFeed::default(),
             gesture: None,
-            shown: None,
+            presented: None,
             snapshot_seq: 0,
             measure,
         }
     }
 
-    /// The one entry point.
     pub fn handle(&mut self, input: Input, now: Time, env: &Env) -> Effects {
         self.now = now;
         let mut effects = Effects::default();
@@ -198,10 +195,10 @@ impl<M: Measure> App<M> {
                 )
             });
         let frame = self.layout(env);
-        if self.shown.as_ref() != Some(&frame) {
+        if self.presented.as_ref() != Some(&frame) {
             effects.present = Some(frame.clone());
         }
-        self.shown = Some(frame);
+        self.presented = Some(frame);
         effects.wake_in = self.wake_in();
         effects
     }
@@ -215,7 +212,7 @@ impl<M: Measure> App<M> {
             width: r.width,
             height: r.height,
         };
-        let frame = self.shown.as_ref();
+        let frame = self.presented.as_ref();
         let expanded = match self.overlay.mode {
             OverlayMode::Expanded(timeframe) => Some(timeframe),
             OverlayMode::Collapsed => None,
@@ -258,7 +255,6 @@ impl<M: Measure> App<M> {
         }
     }
 
-    /// For the Settings window and the tray menu's Lock/Unlock title.
     pub fn settings(&self) -> &Settings {
         &self.overlay.settings
     }
@@ -305,17 +301,17 @@ impl<M: Measure> App<M> {
     }
 
     fn pointer(&mut self, input: PointerInput, env: &Env, effects: &mut Effects) {
-        let Some(shown) = self.shown.clone() else {
+        let Some(presented) = self.presented.clone() else {
             return;
         };
         match input {
             PointerInput::LeftDown(at) => {
-                if shown.hit(at) == PressTarget::Outside {
+                if presented.hit(at) == PressTarget::Outside {
                     return;
                 }
                 self.gesture = Some(Gesture {
                     press: at,
-                    window_origin: shown.window.origin(),
+                    window_origin: presented.window.origin(),
                     pointer: at,
                 });
                 self.send(OverlayEvent::Pressed);
@@ -335,14 +331,14 @@ impl<M: Measure> App<M> {
                 let window_origin = if self.overlay.drag == DragPhase::Dragging {
                     gesture.dragged_origin()
                 } else {
-                    shown.window.origin()
+                    presented.window.origin()
                 };
-                let ticker = shown.ticker.offset(window_origin);
-                let window = Rect::new(window_origin, shown.window.size());
+                let ticker = presented.ticker.offset(window_origin);
+                let window = Rect::new(window_origin, presented.window.size());
                 let landed = placement::screen_for(&ticker, &env.screens)
                     .or_else(|| placement::screen_for(&window, &env.screens))
                     .map_or(ticker, |screen| placement::clamp(ticker, &screen.work));
-                let over = shown.hit(at);
+                let over = presented.hit(at);
                 let menu_click = self.overlay.menu_open && self.overlay.drag == DragPhase::Pressed;
                 self.send(OverlayEvent::Released {
                     over,
@@ -360,7 +356,7 @@ impl<M: Measure> App<M> {
                 }
             }
             PointerInput::RightUp(at) => {
-                if self.gesture.is_none() && shown.hit(at) != PressTarget::Outside {
+                if self.gesture.is_none() && presented.hit(at) != PressTarget::Outside {
                     self.send(OverlayEvent::SecondaryClicked);
                 }
             }
@@ -393,7 +389,7 @@ impl<M: Measure> App<M> {
 
     fn layout(&self, env: &Env) -> Frame {
         let settings = &self.overlay.settings;
-        let scale = screen_scale(settings.position, &env.screens);
+        let scale = scale_at_saved_corner(settings.position, &env.screens);
         let px = |dips: f64| (dips * scale).round();
         let display = TickerDisplay::new(&self.status(), settings);
         let ticker_style = TextStyle {
@@ -806,9 +802,7 @@ fn menu_box(menu: &[(MenuItem, Rect)], scale: f64) -> Option<Rect> {
     })
 }
 
-/// The monitor the ticker's saved corner is on, else the primary. Sizes depend on the scale and placement depends on
-/// the size, so the corner, not the placed rect, picks the scale.
-fn screen_scale(position: Option<ScreenPoint>, screens: &[ScreenArea]) -> f64 {
+fn scale_at_saved_corner(position: Option<ScreenPoint>, screens: &[ScreenArea]) -> f64 {
     position
         .and_then(|p| {
             screens

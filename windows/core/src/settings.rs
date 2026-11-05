@@ -184,25 +184,6 @@ impl Default for Settings {
     }
 }
 
-/// The model check keeps visited states in a HashSet. Hashing only the discrete fields keeps Hash consistent with
-/// the derived PartialEq (equal settings hash equal) without having to normalize -0.0 in the float fields.
-impl Eq for Settings {}
-impl std::hash::Hash for Settings {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (
-            self.decimals,
-            self.show_label,
-            self.show_change,
-            self.locked,
-            self.refresh_seconds,
-            self.only_when_wow_active,
-            self.position.is_some(),
-            self.timeframe,
-        )
-            .hash(state);
-    }
-}
-
 fn rgba(object: &Map<String, Value>) -> Option<Rgba> {
     let channel = |key: &str| object.get(key).and_then(Value::as_f64);
     Some(Rgba {

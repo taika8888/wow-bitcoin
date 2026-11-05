@@ -1,5 +1,3 @@
-//! `App::handle` traces with the recorded fixtures: what the shell is told to fetch, save, capture and present, and
-//! what the presented frame hit-tests to.
 mod support;
 
 use support::{FakeMeasure, OHLC_1, OHLC_15, TICKER};

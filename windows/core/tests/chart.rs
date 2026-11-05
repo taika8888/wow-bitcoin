@@ -22,7 +22,6 @@ fn candle(open: f64, close: f64, minute: f64) -> Candle {
 mod candle_chart {
     use super::*;
 
-    /// Values read straight from the fixture JSON, not from the parser.
     #[test]
     fn recorded_candles_fit_the_padded_domain() {
         for (body, timeframe, low, high, up, down) in [
