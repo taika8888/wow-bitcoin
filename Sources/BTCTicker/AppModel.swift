@@ -68,6 +68,12 @@ final class AppModel {
         }
     }
 
+    /// The backoff and the wait were measured against a network that may have come back during sleep.
+    func woke() {
+        schedule.woke()
+        rescheduleFeed()
+    }
+
     private func rescheduleFeed() {
         feedWait?.cancel()
     }

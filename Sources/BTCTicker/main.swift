@@ -30,6 +30,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let frontmost = Frontmost(note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)
             MainActor.assumeIsolated { self?.model.send(.appActivated(frontmost)) }
         }
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.overlay.render() }
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.model.woke()
+                self?.overlay.render()
+            }
+        }
 
         tasks = [Task { await model.runFeed() }, Task { await model.runClock() }]
     }
