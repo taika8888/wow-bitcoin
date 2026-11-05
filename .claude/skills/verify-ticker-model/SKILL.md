@@ -1,6 +1,6 @@
 ---
 name: verify-ticker-model
-description: Model-check the Windows BTC ticker's core state machines (App::handle and OverlayState::reduce in windows/crates/ticker-core) over every interleaving of inputs. Use before committing any change to windows/crates/ticker-core/src/app.rs, chart.rs, feed.rs, overlay.rs, market.rs or kraken.rs, when a model check in cargo test fails, or when a change is meant to alter fetch, schedule, click, drag, zoom, save or render behavior.
+description: Model-check the Windows BTC ticker's core state machines (App::handle and OverlayState::reduce in crates/ticker-core) over every interleaving of inputs. Use before committing any change to crates/ticker-core/src/app.rs, chart.rs, feed.rs, overlay.rs, market.rs or kraken.rs, when a model check in cargo test fails, or when a change is meant to alter fetch, schedule, click, drag, zoom, save or render behavior.
 ---
 
 # Verify the ticker's state machines
@@ -9,7 +9,7 @@ The Windows ticker's core is two pure state machines. `App::handle` takes every 
 
 ## What is verified
 
-All of this lives in `windows/crates/ticker-core/tests/model_check/`, in the `model_check` test target. Each check is one invariant, checked on every transition. Each line below gives the property and the harm it prevents.
+All of this lives in `crates/ticker-core/tests/model_check/`, in the `model_check` test target. Each check is one invariant, checked on every transition. Each line below gives the property and the harm it prevents.
 
 `app.rs`, the App check (14 invariants, in the `INVARIANTS` table):
 
@@ -61,7 +61,7 @@ The tool is an explicit-state breadth-first search over the real Rust code, in `
 - Kani does not run on Windows.
 - A property test samples random paths. BFS covers every path up to the bound and gives the shortest counterexample.
 
-The only dependency is the Rust toolchain the repo already uses (`rust-version` 1.98 in `windows/Cargo.toml`). The test profile is built at `opt-level = 3` with debug assertions on, so the walks run in seconds.
+The only dependency is the Rust toolchain the repo already uses (`rust-version` 1.98 in the root `Cargo.toml`). The test profile is built at `opt-level = 3` with debug assertions on, so the walks run in seconds.
 
 ## Bounds and assumptions
 
@@ -97,7 +97,7 @@ The App checker computes "a quote is due" with the code's own `FeedSchedule::del
 
 ## Run it
 
-From `windows/` in the repo:
+From the repo root:
 
 ```
 cargo test -p ticker-core --test model_check
@@ -111,7 +111,7 @@ To prove the checks can still fail, run this from the repo root:
 powershell -NoProfile -ExecutionPolicy Bypass -File windows\scripts\mutants.ps1 [-Only <mutant-name>]
 ```
 
-It needs a clean `windows/crates/ticker-core/src`, and it refuses to start otherwise. A killed run skips its restore and can leave a mutant in the source, so before you commit after an interrupted run, check `git status` and restore with `git checkout -- windows/crates/ticker-core/src`. Each mutant takes about 13 s, and the full set of 23 takes about 5 minutes. Logs go to `windows/target/verify/mutants/<name>.log`.
+It needs a clean `crates/ticker-core/src`, and it refuses to start otherwise. A killed run skips its restore and can leave a mutant in the source, so before you commit after an interrupted run, check `git status` and restore with `git checkout -- crates/ticker-core/src`. Each mutant takes about 13 s, and the full set of 23 takes about 5 minutes. Logs go to `target/verify/mutants/<name>.log`.
 
 ## Read a counterexample
 
@@ -182,7 +182,7 @@ Each checker keeps its own records (`World` in `app.rs` and `overlay.rs`). These
 **Sync commit: `a0f1dc6`** ("Prove the model checks catch broken zoom"). At this commit, both checks were confirmed to describe the covered code, chart zoom included. All 23 mutants were caught, and `verify.ps1` printed only PASS. To see whether the verification needs another look, run this from the repo root:
 
 ```
-git log --oneline a0f1dc6..HEAD -- windows/crates/ticker-core/src windows/crates/ticker-core/tests/model_check windows/scripts/mutants.ps1
+git log --oneline a0f1dc6..HEAD -- '*ticker-core/src/*' '*ticker-core/tests/model_check/*' windows/scripts/mutants.ps1
 ```
 
 If it lists commits, read their diffs against the coverage record. Update the model, invariants and mutants where behavior changed intentionally. Rerun `cargo test -p ticker-core --test model_check` and `mutants.ps1`. Only then move the sync commit forward to the commit you checked, and update the table of measured numbers.

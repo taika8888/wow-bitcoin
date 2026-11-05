@@ -9,7 +9,7 @@
 # not stop the build, and the normal build cache stays untouched.
 param([string]$Only)
 $ErrorActionPreference = 'Stop'
-$workspace = Split-Path -Parent $PSScriptRoot
+$workspace = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $crate = Join-Path $workspace 'crates\ticker-core'
 # A killed run skips the restore below and leaves its mutant in the source; mutating on top of it would hide that.
 $dirty = git -C $crate status --porcelain -- src

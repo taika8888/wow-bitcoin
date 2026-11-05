@@ -4,7 +4,7 @@
 # To add a check, call Invoke-Check (for a command whose exit code decides) or Write-Result (for anything
 # else) below the existing ones. Keep one line per check.
 $ErrorActionPreference = 'Stop'
-$workspace = Split-Path -Parent $PSScriptRoot
+$workspace = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 Set-Location $workspace
 $logs = Join-Path $workspace 'target\verify'
 New-Item -ItemType Directory -Force -Path $logs | Out-Null

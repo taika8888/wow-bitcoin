@@ -10,9 +10,9 @@ use super::{Frame, Panel, Renderer};
 
 /// Kraken responses recorded for the macOS tests, the same bytes the core tests read.
 const RECORDED: [(&str, Timeframe); 3] = [
-    (include_str!("../../../../../Tests/TickerCoreTests/Fixtures/kraken/ohlc_1.json"), Timeframe::M1),
-    (include_str!("../../../../../Tests/TickerCoreTests/Fixtures/kraken/ohlc_15.json"), Timeframe::M15),
-    (include_str!("../../../../../Tests/TickerCoreTests/Fixtures/kraken/ohlc_240.json"), Timeframe::H4),
+    (include_str!("../../../../Tests/TickerCoreTests/Fixtures/kraken/ohlc_1.json"), Timeframe::M1),
+    (include_str!("../../../../Tests/TickerCoreTests/Fixtures/kraken/ohlc_15.json"), Timeframe::M15),
+    (include_str!("../../../../Tests/TickerCoreTests/Fixtures/kraken/ohlc_240.json"), Timeframe::H4),
 ];
 
 /// A mid-grey stand-in for the game scene the overlay floats over.
