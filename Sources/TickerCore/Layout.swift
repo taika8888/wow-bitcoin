@@ -82,13 +82,13 @@ public enum TickerPlacement {
     }
 
     /// The saved origin, kept whole inside the visible area of the screen the ticker overlaps most, or the
-    /// top-right corner of the first screen when nothing is saved or the saved spot is on no screen.
+    /// top center of the first screen (WoW keeps its minimap and buffs top right) when nothing is saved or the saved spot is on no screen.
     public static func frame(saved: ScreenPoint?, size: CGSize, screens: [ScreenArea]) -> CGRect {
         if let saved {
             let rect = CGRect(origin: CGPoint(x: saved.x, y: saved.y), size: size)
             if let area = screen(for: rect, in: screens)?.visible { return clamp(rect, into: area) }
         }
         guard let area = screens.first?.visible else { return CGRect(origin: .zero, size: size) }
-        return CGRect(origin: CGPoint(x: area.maxX - size.width - margin.width, y: area.maxY - size.height - margin.height), size: size)
+        return CGRect(origin: CGPoint(x: (area.midX - size.width / 2).rounded(), y: area.maxY - size.height - margin.height), size: size)
     }
 }

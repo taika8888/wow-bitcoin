@@ -13,9 +13,9 @@ private func placed(_ x: Double, _ y: Double, size: CGSize = size) -> CGRect {
 }
 
 @Suite struct TickerPlacementTests {
-    @Test func nothingSavedSitsInTheTopRightOfTheFirstScreen() {
+    @Test func nothingSavedSitsTopCenterOfTheFirstScreenClearOfTheMinimap() {
         let frame = TickerPlacement.frame(saved: nil, size: size, screens: screens)
-        #expect(frame == CGRect(x: 1728 - 16 - 180, y: 1084 - 12 - 27, width: 180, height: 27))
+        #expect(frame == CGRect(x: 864 - 90, y: 1084 - 12 - 27, width: 180, height: 27))
     }
 
     @Test func aSpotWellInsideIsKeptExactly() {

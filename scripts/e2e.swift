@@ -155,6 +155,11 @@ func same(_ a: CGRect, _ b: CGRect) -> Bool {
     abs(a.minX - b.minX) < 1 && abs(a.minY - b.minY) < 1 && abs(a.width - b.width) < 1 && abs(a.height - b.height) < 1
 }
 
+/// Live price text can change the ticker's width mid-run, so the ticker counts as unmoved when its top edge and any one of its left, center or right holds.
+func sameSpot(_ a: CGRect, _ b: CGRect) -> Bool {
+    abs(a.minY - b.minY) < 1 && (abs(a.minX - b.minX) < 1 || abs(a.midX - b.midX) < 1 || abs(a.maxX - b.maxX) < 1)
+}
+
 func describe(_ rect: CGRect) -> String {
     "\(Int(rect.minX)),\(Int(rect.minY)) \(Int(rect.width))x\(Int(rect.height))"
 }
@@ -464,7 +469,7 @@ if let collapsed, let tickerHome {
         }
     }
 
-    let folded = click("ticker") { $0.mode == "collapsed" && same($0.frame, collapsed.frame) }
+    let folded = click("ticker") { $0.mode == "collapsed" && sameSpot($0.frame, collapsed.frame) }
     report(folded != nil ? "PASS" : "FAIL", "collapse",
            "clicked the ticker: \(folded.map { "collapsed back to \(describe($0.frame))" } ?? describeChart(Snapshot.read()))")
 
@@ -492,7 +497,7 @@ if let collapsed, let tickerHome {
     }
     _ = click("ticker") { $0.mode == "collapsed" }
 
-    let moved = tickerSamples.filter { !same($0, tickerHome) }
+    let moved = tickerSamples.filter { !sameSpot($0, tickerHome) }
     if moved.isEmpty {
         report("PASS", "ticker-anchored", "ticker target stayed at \(describe(tickerHome)) across \(tickerSamples.count) samples in both modes")
     } else {

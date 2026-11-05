@@ -48,7 +48,7 @@ public struct Settings: Codable, Hashable, Sendable {
     public var locked = false
     public var refreshSeconds = 5
     public var onlyWhenWoWActive = false
-    /// nil places the overlay at the default spot near the top-right of the main screen.
+    /// nil places the overlay at the default spot at the top center of the main screen.
     public var position: ScreenPoint?
     /// The timeframe the chart opens on, which is the one last chosen.
     public var timeframe = Timeframe.m15
