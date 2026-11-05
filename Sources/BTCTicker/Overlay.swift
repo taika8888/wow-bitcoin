@@ -81,7 +81,7 @@ final class OverlayController {
     }
 }
 
-/// Draws the ticker and turns mouse input into overlay events. The reducer decides whether a drag may move the window.
+/// The reducer, not this view, decides whether a drag may move the window.
 final class TickerView: NSView {
     var onEvent: (OverlayEvent) -> Void = { _ in }
     var isDragging: () -> Bool = { false }

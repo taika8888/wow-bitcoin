@@ -17,7 +17,6 @@ public enum FeedStatus: Hashable, Sendable {
         return now.timeIntervalSince(quote.fetchedAt) > threshold ? .stale(quote) : .live(quote)
     }
 
-    /// Delay before the next request: the refresh interval, doubled per consecutive failure, capped at a minute.
     public static func nextFetchDelay(refreshSeconds: Int, consecutiveFailures: Int) -> TimeInterval {
         let base = TimeInterval(refreshSeconds)
         guard consecutiveFailures > 0 else { return base }

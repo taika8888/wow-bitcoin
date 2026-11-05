@@ -14,7 +14,6 @@ public struct DisplaySegment: Hashable, Sendable {
     }
 }
 
-/// What the overlay draws: colored text runs, dimmed when the price is not live.
 public struct TickerDisplay: Hashable, Sendable {
     public let segments: [DisplaySegment]
     public let dimmed: Bool

@@ -72,7 +72,6 @@ public struct Settings: Codable, Hashable, Sendable {
         position = value(.position, defaults.position)
     }
 
-    /// Never fails: an absent or unreadable blob yields the defaults.
     public static func decode(json: String?) -> Settings {
         guard let data = json?.data(using: .utf8), let settings = try? JSONDecoder().decode(Settings.self, from: data) else {
             return Settings()

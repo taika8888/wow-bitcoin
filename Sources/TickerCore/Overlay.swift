@@ -23,7 +23,6 @@ public enum DragPhase: Hashable, Sendable {
     case idle, dragging
 }
 
-/// Everything the overlay's behavior depends on. `settings` is the persisted part.
 public struct OverlayState: Hashable, Sendable {
     public var settings: Settings
     public var frontmost: Frontmost
