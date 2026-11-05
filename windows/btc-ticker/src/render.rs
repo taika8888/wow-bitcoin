@@ -319,9 +319,10 @@ impl Renderer {
         };
 
         let (low, high) = (*chart.price_domain.start(), *chart.price_domain.end());
-        let prices: Vec<(f64, IDWriteTextLayout)> = price_ticks(low, high)
+        let prices: Vec<(f64, IDWriteTextLayout)> = chart
+            .price_ticks()
             .into_iter()
-            .map(|price| Ok((price, self.text_layout(&TickerDisplay::price(price, 0), &axis_format)?)))
+            .map(|tick| Ok((tick.value, self.text_layout(&tick.label, &axis_format)?)))
             .collect::<Result<_>>()?;
         let mut label_width: f64 = 0.0;
         let mut label_height: f64 = 0.0;
@@ -342,11 +343,12 @@ impl Renderer {
         let x_of = |time: Timestamp| plot.x + time.seconds_since(start) / span * plot.width;
         let y_of = |price: f64| plot.max_y() - (price - low) / (high - low).max(f64::EPSILON) * plot.height;
 
-        let times: Vec<(f64, IDWriteTextLayout, Range<f64>)> = time_ticks(start, end)
+        let times: Vec<(f64, IDWriteTextLayout, Range<f64>)> = chart
+            .time_ticks(win::utc_offset(end), win::hour12())
             .into_iter()
-            .map(|(time, text)| {
-                let x = x_of(time).round() + 0.5;
-                let label = self.text_layout(&text, &axis_format)?;
+            .map(|tick| {
+                let x = x_of(tick.value).round() + 0.5;
+                let label = self.text_layout(&tick.label, &axis_format)?;
                 let width = measure(&label)?.width;
                 let left = (x - width / 2.0).clamp(plot.x, plot.max_x() - width);
                 Ok((x, label, left..left + width))
@@ -519,49 +521,6 @@ fn rect_f(rect: Rect) -> D2D_RECT_F {
 
 fn point(x: f64, y: f64) -> Vector2 {
     Vector2 { X: x as f32, Y: y as f32 }
-}
-
-/// Three to five round prices inside the domain, a step of 1, 2, 2.5 or 5 times a power of ten apart.
-fn price_ticks(low: f64, high: f64) -> Vec<f64> {
-    let raw = (high - low) / 5.0;
-    if raw <= 0.0 || !raw.is_finite() {
-        return Vec::new();
-    }
-    let magnitude = 10f64.powf(raw.log10().floor());
-    let step =
-        [1.0, 2.0, 2.5, 5.0, 10.0].into_iter().map(|nice| nice * magnitude).find(|step| *step >= raw).unwrap_or(raw);
-    let first = (low / step).ceil() as i64;
-    let last = (high / step).floor() as i64;
-    (first..=last).map(|index| index as f64 * step).collect()
-}
-
-/// At most five ticks on local clock boundaries: "14:30" within a day, "Nov 3" across days.
-fn time_ticks(start: Timestamp, end: Timestamp) -> Vec<(Timestamp, String)> {
-    const STEPS: [f64; 13] = [
-        60.0, 300.0, 900.0, 1800.0, 3600.0, 7200.0, 10_800.0, 21_600.0, 43_200.0, 86_400.0, 172_800.0, 345_600.0,
-        604_800.0,
-    ];
-    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-    let span = end.seconds_since(start);
-    let step = STEPS.into_iter().find(|step| span / step <= 5.0).unwrap_or(STEPS[STEPS.len() - 1]);
-    let local = win::local_time(end);
-    let local_minutes = f64::from(local.wHour) * 60.0 + f64::from(local.wMinute);
-    let utc_minutes = (end.unix_seconds().rem_euclid(86_400.0) / 60.0).floor();
-    let offset = ((local_minutes - utc_minutes + 2160.0).rem_euclid(1440.0) - 720.0) * 60.0;
-    let mut ticks = Vec::new();
-    let mut tick = ((start.unix_seconds() + offset) / step).ceil() * step - offset;
-    while tick <= end.unix_seconds() {
-        let time = Timestamp::from_unix_seconds(tick);
-        let clock = win::local_time(time);
-        let label = if step >= 86_400.0 {
-            format!("{} {}", MONTHS[usize::from(clock.wMonth.clamp(1, 12)) - 1], clock.wDay)
-        } else {
-            format!("{:02}:{:02}", clock.wHour, clock.wMinute)
-        };
-        ticks.push((time, label));
-        tick += step;
-    }
-    ticks
 }
 
 #[cfg(test)]

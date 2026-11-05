@@ -4,13 +4,14 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ticker_core::{Rect, ScreenArea, Screens, Timestamp};
-use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, POINT, RECT, SYSTEMTIME};
+use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND, LPARAM, POINT, RECT, SYSTEMTIME};
+use windows::Win32::Globalization::{GetLocaleInfoEx, LOCALE_ITIME};
 use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
-use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToFileTime, SystemTimeToTzSpecificLocalTime};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
     CS_HREDRAW, CS_VREDRAW, GetCursorPos, GetWindowRect, IDC_ARROW, LoadCursorW, MONITORINFOF_PRIMARY, RegisterClassW,
@@ -113,21 +114,30 @@ pub fn process_image(pid: u32) -> Option<String> {
     }
 }
 
-/// The local wall-clock time of a Unix time, for axis labels.
-pub fn local_time(time: Timestamp) -> SYSTEMTIME {
-    let ticks = ((time.unix_seconds() + 11_644_473_600.0) * 10_000_000.0) as u64;
-    let file_time =
-        windows::Win32::Foundation::FILETIME { dwLowDateTime: ticks as u32, dwHighDateTime: (ticks >> 32) as u32 };
-    let (mut utc, mut local) = (SYSTEMTIME::default(), SYSTEMTIME::default());
-    // SAFETY: each call reads and writes one stack struct.
+/// Seconds east of UTC that local clocks read at `time`, daylight saving included.
+pub fn utc_offset(time: Timestamp) -> i32 {
+    let to_file_time = |ticks: u64| FILETIME { dwLowDateTime: ticks as u32, dwHighDateTime: (ticks >> 32) as u32 };
+    let utc_ticks = (time.unix_seconds().floor() + 11_644_473_600.0) as u64 * 10_000_000;
+    let (mut utc, mut local, mut local_file) = (SYSTEMTIME::default(), SYSTEMTIME::default(), FILETIME::default());
+    // SAFETY: each call reads and writes stack structs that outlive it.
     unsafe {
-        if FileTimeToSystemTime(&file_time, &mut utc).is_err()
+        if FileTimeToSystemTime(&to_file_time(utc_ticks), &mut utc).is_err()
             || SystemTimeToTzSpecificLocalTime(None, &utc, &mut local).is_err()
+            || SystemTimeToFileTime(&local, &mut local_file).is_err()
         {
-            return utc;
+            return 0;
         }
     }
-    local
+    let local_ticks = u64::from(local_file.dwHighDateTime) << 32 | u64::from(local_file.dwLowDateTime);
+    ((local_ticks as i64 - utc_ticks as i64) / 10_000_000) as i32
+}
+
+/// Whether the user's locale writes times on a 12-hour clock, as "2:30 PM".
+pub fn hour12() -> bool {
+    let mut value = [0u16; 2];
+    // SAFETY: the buffer outlives the call, and a null locale name means the user's default locale.
+    let written = unsafe { GetLocaleInfoEx(PCWSTR::null(), LOCALE_ITIME, Some(&mut value)) };
+    written > 0 && value[0] == u16::from(b'0')
 }
 
 /// Replaces the file in one rename, so a reader sees the old bytes or the new ones, never a torn write.
