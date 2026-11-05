@@ -5,8 +5,8 @@
 use std::ops::Range;
 
 use ticker_core::{
-    CandleChart, ChartNotice, ExpandedLayout, Rect, Rgba, Settings, Size, TickerDisplay, Timeframe, Timestamp, Tone,
-    spaced_labels,
+    CandleChart, ChartInk, ChartNotice, ExpandedLayout, Rect, Rgba, Settings, Size, TickerDisplay, Timeframe,
+    Timestamp, Tone, spaced_labels,
 };
 use windows::Win32::Foundation::{COLORREF, HWND, POINT, RECT, SIZE};
 use windows::Win32::Graphics::Direct2D::Common::{
@@ -308,7 +308,7 @@ impl Renderer {
             };
             let label = self.text_layout(text, &self.format(12.0 * scale, DWRITE_FONT_WEIGHT_MEDIUM)?)?;
             let size = measure(&label)?;
-            let ink = self.brush(color(settings.text_color, 0.6))?;
+            let ink = self.brush(color(ChartInk::Placeholder.color(settings.text_color), 1.0))?;
             let origin = Vector2 {
                 X: (area.mid_x() - size.width / 2.0).round() as f32,
                 Y: (area.mid_y() - size.height / 2.0).round() as f32,
@@ -354,8 +354,8 @@ impl Renderer {
             .collect::<Result<_>>()?;
         let extents: Vec<Range<f64>> = times.iter().map(|(.., extent)| extent.clone()).collect();
 
-        let grid = self.brush(color(settings.text_color, 0.12))?;
-        let axis_ink = self.brush(color(settings.text_color, 0.7))?;
+        let grid = self.brush(color(ChartInk::Grid.color(settings.text_color), 1.0))?;
+        let axis_ink = self.brush(color(ChartInk::AxisLabel.color(settings.text_color), 1.0))?;
         // SAFETY: drawing between BeginDraw and EndDraw.
         unsafe {
             for (price, label) in &prices {
@@ -383,7 +383,7 @@ impl Renderer {
                 self.target.FillRectangle(&rect_f(body), &brush);
             }
 
-            let last = self.brush(color(settings.text_color, 0.75))?;
+            let last = self.brush(color(ChartInk::LastPrice.color(settings.text_color), 1.0))?;
             let y = y_of(chart.last_price).round() + 0.5;
             self.target.DrawLine(point(plot.x, y), point(plot.max_x(), y), &last, 1.0, &self.dashes);
 

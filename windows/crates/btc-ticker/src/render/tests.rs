@@ -23,6 +23,15 @@ struct Painted {
     width: usize,
     height: usize,
     bgra: Vec<u8>,
+    chart: Rect,
+}
+
+impl Painted {
+    /// The brightest color channel in a band of rows, in premultiplied terms: how much light the overlay adds there.
+    fn brightest(&self, rows: std::ops::Range<f64>) -> u8 {
+        let rows = rows.start as usize * self.width * 4..rows.end as usize * self.width * 4;
+        self.bgra[rows].as_chunks::<4>().0.iter().flat_map(|pixel| pixel[..3].iter().copied()).max().unwrap()
+    }
 }
 
 fn paint(renderer: &Renderer, settings: &Settings, body: &str, scale: f64) -> Painted {
@@ -48,7 +57,12 @@ fn paint(renderer: &Renderer, settings: &Settings, body: &str, scale: f64) -> Pa
         scale,
     };
     let mut dib = renderer.paint(&frame).unwrap();
-    Painted { width: dib.width as usize, height: dib.height as usize, bgra: dib.pixels_mut().to_vec() }
+    Painted {
+        width: dib.width as usize,
+        height: dib.height as usize,
+        bgra: dib.pixels_mut().to_vec(),
+        chart: layout.chart,
+    }
 }
 
 /// Composites the overlay over the backdrop, as the desktop would, and writes it as an RGB PNG.
@@ -93,4 +107,21 @@ fn the_narrowest_chart_renders_from_recorded_candles() {
         let painted = paint(&renderer, &settings, RECORDED[1].0, scale);
         save(&painted, &parity_dir().join(format!("default-15m-{}x.png", scale)));
     }
+}
+
+/// The time labels sit in the bottom rows of the chart, below the plot, in the axis label ink: 70% of the text
+/// color's own opacity. White text at 35% must draw them at 35% of the brightness opaque white text does.
+#[test]
+fn a_translucent_price_color_fades_the_time_labels() {
+    let renderer = Renderer::new().unwrap();
+    let brightest = |alpha| {
+        let settings =
+            Settings { timeframe: Timeframe::M15, text_color: Rgba::new(1.0, 1.0, 1.0, alpha), ..Settings::default() };
+        let painted = paint(&renderer, &settings, RECORDED[1].0, 1.0);
+        painted.brightest(painted.chart.max_y() - 12.0..painted.chart.max_y())
+    };
+    let opaque = brightest(1.0);
+    let faded = brightest(0.35);
+    assert!((170..=179).contains(&opaque), "opaque white labels peak at 70% of 255, not {opaque}");
+    assert!((50..=63).contains(&faded), "35% white labels peak at 35% of 70% of 255, not {faded}");
 }
