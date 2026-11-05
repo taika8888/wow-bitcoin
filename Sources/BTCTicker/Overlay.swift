@@ -32,6 +32,7 @@ final class OverlayController {
     private let view = OverlayView()
     private let stateFile: URL?
     private var lastSnapshot: Data?
+    private var activations = 0
 
     init(model: AppModel, menu: NSMenu, stateFile: URL?) {
         self.model = model
@@ -44,6 +45,12 @@ final class OverlayController {
             DistributedNotificationCenter.default().addObserver(forName: Self.syntheticClick, object: nil, queue: .main) { [weak self] note in
                 guard let x = note.userInfo?["x"] as? Double, let y = note.userInfo?["y"] as? Double else { return }
                 MainActor.assumeIsolated { self?.click(at: CGPoint(x: x, y: y)) }
+            }
+            NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.activations += 1
+                    self?.render()
+                }
             }
         }
     }
@@ -128,7 +135,8 @@ final class OverlayController {
             candles: candles,
             windowNumber: panel.windowNumber,
             frame: globalFrame(panel.frame),
-            targets: view.targets.mapValues { globalFrame($0.offsetBy(dx: origin.x, dy: origin.y)) }
+            targets: view.targets.mapValues { globalFrame($0.offsetBy(dx: origin.x, dy: origin.y)) },
+            activations: activations
         )
         let data = snapshot.json
         guard data != lastSnapshot else { return }

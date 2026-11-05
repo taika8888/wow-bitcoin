@@ -30,10 +30,12 @@ public struct Snapshot: Codable, Hashable, Sendable {
     public var candles: Int
     /// Click targets in the same space as `frame`: "ticker" always, and each timeframe label while expanded.
     public var targets: [String: Frame]
+    /// How often this app became the active app. Clicking the overlay must never raise it.
+    public var activations: Int
 
     public init(
         display: TickerDisplay, status: FeedStatus, overlay: OverlayState, chart: CandleLoad?, candles: Int,
-        windowNumber: Int, frame: Frame, targets: [String: Frame]
+        windowNumber: Int, frame: Frame, targets: [String: Frame], activations: Int
     ) {
         text = display.text
         feed = status.name
@@ -46,6 +48,7 @@ public struct Snapshot: Codable, Hashable, Sendable {
         self.windowNumber = windowNumber
         self.frame = frame
         self.targets = targets
+        self.activations = activations
     }
 
     public var json: Data {

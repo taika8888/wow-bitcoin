@@ -1,8 +1,9 @@
 // End-to-end check against the built app. Usage: swift scripts/e2e.swift "<path>.app" <pidfile>
-// Never clicks, types, or moves the cursor; quits everything it launches.
+// Never types, never moves the cursor, and clicks only the overlay's own process; quits everything it launches.
 import AppKit
 import CoreGraphics
 import Foundation
+import ImageIO
 
 let arguments = CommandLine.arguments
 guard arguments.count == 3 else {
@@ -16,6 +17,9 @@ let settingsKey = "btcTickerSettings"
 let wowBundleID = "com.blizzard.worldofwarcraft"
 let livePattern = #"^BTC \$\d{1,3}(,\d{3})*  [+-]?\d+\.\d{2}%$"#
 let editedPattern = #"^\$\d{1,3}(,\d{3})*\.\d{2}  [+-]?\d+\.\d{2}%$"#
+let syntheticClick = Notification.Name("dev.local.btcticker.e2e.click")
+let candlesKept = ["1m": 120, "15m": 96, "4h": 90]
+let captureDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("build")
 let workDir = FileManager.default.temporaryDirectory.appendingPathComponent("btcticker-e2e-\(getpid())")
 let stateURL = workDir.appendingPathComponent("state.json")
 
@@ -55,26 +59,43 @@ func waitFor<T>(_ seconds: TimeInterval, _ probe: () -> T?) -> T? {
     return probe()
 }
 
+func rect(_ json: Any?) -> CGRect? {
+    guard let frame = json as? [String: Double] else { return nil }
+    return CGRect(x: frame["x"] ?? 0, y: frame["y"] ?? 0, width: frame["width"] ?? 0, height: frame["height"] ?? 0)
+}
+
 struct Snapshot {
     let text: String
     let feed: String
+    let mode: String
     let locked: Bool
     let visible: Bool
     let windowNumber: Int
     let frame: CGRect
+    let timeframe: String?
+    let chart: String?
+    let candles: Int
+    let targets: [String: CGRect]
+    let activations: Int
 
     static func read() -> Snapshot? {
         guard let data = try? Data(contentsOf: stateURL),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let frame = json["frame"] as? [String: Double]
+              let frame = rect(json["frame"])
         else { return nil }
         return Snapshot(
             text: json["text"] as? String ?? "",
             feed: json["feed"] as? String ?? "",
+            mode: json["mode"] as? String ?? "",
             locked: json["locked"] as? Bool ?? false,
             visible: json["visible"] as? Bool ?? false,
             windowNumber: json["windowNumber"] as? Int ?? -1,
-            frame: CGRect(x: frame["x"] ?? 0, y: frame["y"] ?? 0, width: frame["width"] ?? 0, height: frame["height"] ?? 0)
+            frame: frame,
+            timeframe: json["timeframe"] as? String,
+            chart: json["chart"] as? String,
+            candles: json["candles"] as? Int ?? 0,
+            targets: (json["targets"] as? [String: Any] ?? [:]).compactMapValues(rect),
+            activations: json["activations"] as? Int ?? -1
         )
     }
 }
@@ -117,6 +138,10 @@ func onScreenWindows() -> [WindowInfo] {
         else { return nil }
         return WindowInfo(index: index, number: number, pid: pid_t(pid), layer: window[kCGWindowLayer as String] as? Int ?? 0, bounds: bounds)
     }
+}
+
+func same(_ a: CGRect, _ b: CGRect) -> Bool {
+    abs(a.minX - b.minX) < 1 && abs(a.minY - b.minY) < 1 && abs(a.width - b.width) < 1 && abs(a.height - b.height) < 1
 }
 
 func describe(_ rect: CGRect) -> String {
@@ -167,8 +192,7 @@ let windows = onScreenWindows()
 let ours = current.flatMap { snapshot in windows.first { $0.number == snapshot.windowNumber } }
 if let current, let ours {
     let ownedByApp = ours.pid == app.processIdentifier
-    let boundsAgree = abs(ours.bounds.minX - current.frame.minX) < 1 && abs(ours.bounds.minY - current.frame.minY) < 1
-        && abs(ours.bounds.width - current.frame.width) < 1 && abs(ours.bounds.height - current.frame.height) < 1
+    let boundsAgree = same(ours.bounds, current.frame)
     if ownedByApp, boundsAgree, current.visible, ours.bounds.width > 0 {
         report("PASS", "window-on-screen", "window \(ours.number) at layer \(ours.layer), \(describe(ours.bounds)), matches the snapshot")
     } else {
@@ -227,10 +251,169 @@ if let gated {
 }
 
 let frontAfterEdit = frontmostBundleID()
-if frontBefore == frontAfterLaunch, frontBefore == frontAfterEdit {
-    report("PASS", "focus-kept", "frontmost stayed \(frontBefore) through launch and a settings edit")
+
+enum ClickRoute: String {
+    case postToPid = "CGEvent postToPid"
+    case synthesized = "synthesized NSEvent, not HID"
+}
+var route: ClickRoute?
+var clicks = 0
+var fronts: [(before: String, after: String)] = []
+var tickerSamples: [CGRect] = []
+var cursorOnTarget: [CGPoint] = []
+let tickerBundleID = Bundle(url: appURL)?.bundleIdentifier ?? "dev.local.btcticker"
+
+func postToPid(at point: CGPoint) {
+    for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+        CGEvent(mouseEventSource: CGEventSource(stateID: .privateState), mouseType: type, mouseCursorPosition: point, mouseButton: .left)?
+            .postToPid(app.processIdentifier)
+    }
+}
+
+func synthesize(at point: CGPoint) {
+    DistributedNotificationCenter.default().postNotificationName(
+        syntheticClick, object: nil, userInfo: ["x": Double(point.x), "y": Double(point.y)], deliverImmediately: true
+    )
+}
+
+/// Real input first; the synthesized route only once real input is shown not to arrive (no post-event access).
+func click(_ target: String, expecting done: @escaping (Snapshot) -> Bool) -> Snapshot? {
+    guard let before = Snapshot.read(), let rect = before.targets[target] else { return nil }
+    let point = CGPoint(x: rect.midX, y: rect.midY)
+    let frontBefore = frontmostBundleID()
+    var result: Snapshot?
+    if route != .synthesized {
+        postToPid(at: point)
+        result = waitFor(route == nil ? 2 : 10) { Snapshot.read().flatMap { done($0) ? $0 : nil } }
+        if route == nil { route = result == nil ? .synthesized : .postToPid }
+    }
+    if route == .synthesized {
+        synthesize(at: point)
+        result = waitFor(10) { Snapshot.read().flatMap { done($0) ? $0 : nil } }
+    }
+    if result != nil { clicks += 1 }
+    fronts.append((frontBefore, frontmostBundleID()))
+    // A warped cursor would sit on the target; the user moving the mouse would not.
+    if let cursor = CGEvent(source: nil)?.location, hypot(cursor.x - point.x, cursor.y - point.y) < 1 { cursorOnTarget.append(cursor) }
+    if let ticker = Snapshot.read()?.targets["ticker"] { tickerSamples.append(ticker) }
+    return result
+}
+
+func charted(_ timeframe: String) -> (Snapshot) -> Bool {
+    { $0.mode == "expanded" && $0.timeframe == timeframe && $0.chart == "loaded" && $0.candles == candlesKept[timeframe] }
+}
+
+func describeChart(_ snapshot: Snapshot?) -> String {
+    guard let snapshot else { return "no snapshot" }
+    return "mode \(snapshot.mode) timeframe \(snapshot.timeframe ?? "-") chart \(snapshot.chart ?? "-") candles \(snapshot.candles)"
+}
+
+/// Pixels close to the default up (green) and down (red) colors prove candles were drawn, not just modelled.
+func inspect(_ url: URL) -> (width: Int, colors: Int, up: Int, down: Int)? {
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+          let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+          let space = CGColorSpace(name: CGColorSpace.sRGB)
+    else { return nil }
+    let width = image.width, height = image.height
+    var pixels = [UInt8](repeating: 0, count: width * height * 4)
+    guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                                  space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+    else { return nil }
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    var colors = Set<Int>()
+    var up = 0, down = 0
+    for i in stride(from: 0, to: pixels.count, by: 4) {
+        let r = Int(pixels[i]), g = Int(pixels[i + 1]), b = Int(pixels[i + 2])
+        colors.insert((r >> 4) << 8 | (g >> 4) << 4 | b >> 4)
+        guard pixels[i + 3] > 200 else { continue }
+        if g > r + 60, g > b + 40 { up += 1 }
+        if r > g + 80, r > b + 80 { down += 1 }
+    }
+    return (width, colors.count, up, down)
+}
+
+func capture(_ snapshot: Snapshot, _ timeframe: String) {
+    let url = captureDir.appendingPathComponent("expanded-\(timeframe).png")
+    try? FileManager.default.removeItem(at: url)
+    RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+    run("/usr/sbin/screencapture", ["-x", "-o", "-l", String(snapshot.windowNumber), url.path])
+    guard let found = inspect(url) else {
+        report("FAIL", "capture-\(timeframe)", "no readable PNG at \(url.path)")
+        return
+    }
+    let detail = "\(url.path): \(found.width)px wide for a \(Int(snapshot.frame.width))pt window, \(found.colors) colors, \(found.up) up-colored and \(found.down) down-colored pixels"
+    let ok = found.width >= Int(snapshot.frame.width) && found.colors >= 16 && found.up >= 50 && found.down >= 50
+    report(ok ? "PASS" : "FAIL", "capture-\(timeframe)", detail)
+}
+
+writeSettings(#"{"showLabel":true,"showChange":true,"decimals":0,"fontSize":15,"locked":true,"onlyWhenWoWActive":false,"timeframe":"h4"}"#)
+let collapsed = waitFor(5) {
+    Snapshot.read().flatMap { $0.locked && $0.visible && $0.mode == "collapsed" && $0.frame.height < 35 && matches($0.text, livePattern) ? $0 : nil }
+}
+let tickerHome = collapsed?.targets["ticker"]
+if let collapsed, let tickerHome {
+    tickerSamples.append(tickerHome)
+    let expanded = click("ticker", expecting: charted("4h"))
+    let listed = expanded.flatMap { snapshot in onScreenWindows().first { $0.number == snapshot.windowNumber } }
+    let screen = CGDisplayBounds(CGMainDisplayID())
+    if let expanded, let listed, same(listed.bounds, expanded.frame), screen.contains(expanded.frame) {
+        report("PASS", "expand", "locked ticker click opened the last chosen 4h with \(expanded.candles) candles; window \(describe(collapsed.frame)) -> \(describe(listed.bounds)) per CGWindowList, inside the \(describe(screen)) display")
+    } else {
+        report("FAIL", "expand", "\(describeChart(expanded ?? Snapshot.read())); CG bounds \(listed.map { describe($0.bounds) } ?? "not listed")")
+    }
+    if let expanded { capture(expanded, "4h") }
+
+    for timeframe in ["15m", "1m"] {
+        let shown = click(timeframe, expecting: charted(timeframe))
+        if let shown {
+            report("PASS", "timeframe-\(timeframe)", "clicked the \(timeframe) control: \(describeChart(shown)), expected \(candlesKept[timeframe]!)")
+            capture(shown, timeframe)
+        } else {
+            report("FAIL", "timeframe-\(timeframe)", "after clicking \(timeframe): \(describeChart(Snapshot.read())), expected \(candlesKept[timeframe]!) loaded candles")
+        }
+    }
+
+    let folded = click("ticker") { $0.mode == "collapsed" && same($0.frame, collapsed.frame) }
+    report(folded != nil ? "PASS" : "FAIL", "collapse",
+           "clicked the ticker: \(folded.map { "collapsed back to \(describe($0.frame))" } ?? describeChart(Snapshot.read()))")
+
+    let reopened = click("ticker", expecting: charted("1m"))
+    let persisted = run("/usr/bin/defaults", ["read", suite, settingsKey]).contains(#""timeframe":"m1""#)
+    if reopened != nil, persisted {
+        report("PASS", "reexpand", "reopened on 1m, the last chosen, and the saved settings hold timeframe m1")
+    } else {
+        report("FAIL", "reexpand", "\(describeChart(Snapshot.read())), saved timeframe m1: \(persisted)")
+    }
+    _ = click("ticker") { $0.mode == "collapsed" }
+
+    let moved = tickerSamples.filter { !same($0, tickerHome) }
+    if moved.isEmpty {
+        report("PASS", "ticker-anchored", "ticker target stayed at \(describe(tickerHome)) across \(tickerSamples.count) samples in both modes")
+    } else {
+        report("FAIL", "ticker-anchored", "ticker target \(describe(tickerHome)) moved to \(moved.map(describe).joined(separator: ", "))")
+    }
+
+    let label = "click (\((route ?? .synthesized).rawValue))"
+    if let route, clicks == fronts.count, cursorOnTarget.isEmpty {
+        let fallback = route == .synthesized ? "; postToPid did not reach the app (CGPreflightPostEventAccess \(CGPreflightPostEventAccess()))" : ""
+        report("PASS", label, "\(clicks)/\(fronts.count) clicks changed the snapshot as expected; the cursor was never warped onto a target\(fallback)")
+    } else {
+        report("FAIL", label, "\(clicks)/\(fronts.count) clicks took effect; cursor found on a click target at \(cursorOnTarget)")
+    }
 } else {
-    report("FAIL", "focus-kept", "frontmost was \(frontBefore), then \(frontAfterLaunch) after launch, \(frontAfterEdit) after the edit")
+    report("FAIL", "expand", "the overlay never showed a collapsed, locked ticker with a hit target; \(describeChart(Snapshot.read()))")
+}
+
+let activations = Snapshot.read()?.activations ?? -1
+let samples = [frontBefore, frontAfterLaunch, frontAfterEdit] + fronts.flatMap { [$0.before, $0.after] }
+let switches = fronts.filter { $0.before != $0.after }.map { "\($0.before) -> \($0.after)" }
+    + (frontBefore == frontAfterLaunch && frontAfterLaunch == frontAfterEdit ? [] : ["\(frontBefore) -> \(frontAfterLaunch) -> \(frontAfterEdit) before the clicks"])
+if activations != 0 || samples.contains(tickerBundleID) {
+    report("FAIL", "focus-kept", "BTC Ticker became active \(activations) times; frontmost samples: \(samples.joined(separator: ", "))")
+} else if switches.isEmpty {
+    report("PASS", "focus-kept", "frontmost stayed \(frontBefore) through launch, settings edits and \(fronts.count) clicks; BTC Ticker never became active")
+} else {
+    report("PASS", "focus-kept", "BTC Ticker never became active and was never frontmost; frontmost changed only between other apps, which a click on the panel cannot cause: \(switches.joined(separator: "; "))")
 }
 
 let accepted = NSRunningApplication(processIdentifier: app.processIdentifier)?.terminate() ?? false
