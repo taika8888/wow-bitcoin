@@ -1,0 +1,60 @@
+name: windows
+
+on:
+  push:
+    paths:
+      - "windows/**"
+      - "Tests/TickerCoreTests/Fixtures/**"
+      - ".github/workflows/windows.yml"
+  pull_request:
+    paths:
+      - "windows/**"
+      - "Tests/TickerCoreTests/Fixtures/**"
+      - ".github/workflows/windows.yml"
+  workflow_dispatch:
+
+# Windows minutes bill double; a newer push makes the older run worthless.
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: windows
+
+      - name: Build
+        run: cargo build --release --workspace --locked
+
+      - name: Unit tests and the model check
+        run: cargo test --workspace --locked
+
+      - name: End to end against the built app
+        timeout-minutes: 5
+        run: |
+          mkdir -p ../artifacts
+          target/release/btc-ticker-e2e.exe target/release/btc-ticker.exe ../artifacts 2>&1 | tee ../artifacts/e2e.log
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-e2e-${{ github.run_number }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: warn
