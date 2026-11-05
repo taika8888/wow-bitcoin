@@ -202,6 +202,7 @@ fn run(report: &mut Report, app: &Path, shots: &Path, pid_file: Option<PathBuf>)
     chart(report, &mut session, shots, &work_area);
     opacity_zero(report, &mut session);
     dragging(report, &mut session);
+    chart_manipulation(report, &mut session, &work_area, shots);
     menu(report, &mut session);
     focus(report, &session);
     settings_window(report, &mut session, shots);
@@ -785,6 +786,112 @@ fn dragging(report: &mut Report, session: &mut Session) {
             format!("the ticker at {start} did not follow a drag by (150, 80): {error}"),
         ),
     }
+}
+
+fn chart_manipulation(report: &mut Report, session: &mut Session, work: &Rect, shots: &Path) {
+    let result = manipulate_chart(session, work);
+    match result {
+        Ok(detail) => report.line("PASS", "chart-drag-resize", detail),
+        Err(error) => report.line("FAIL", "chart-drag-resize", error),
+    }
+    // Leave the menu check its expected unlocked, collapsed ticker even if this check failed midway.
+    if let Some(mut saved) = session.ticker.saved_settings() {
+        saved["locked"] = json!(false);
+        session.ticker.write_settings(&saved);
+        let _ = session.ticker.wait_for(5.0, |snapshot| !snapshot.locked);
+    }
+    if let Some(expanded) = session.ticker.snapshot().filter(|snapshot| snapshot.mode == "expanded") {
+        screenshot(report, &expanded, shots, "expanded-resized", false);
+        let _ = session.click("ticker", 5.0, |snapshot| snapshot.mode == "collapsed");
+    }
+}
+
+/// Exercise the actual corner hit target and saved dimensions, with focus checked around every gesture.
+fn manipulate_chart(session: &mut Session, work: &Rect) -> Result<String, String> {
+    session.ticker.write_settings(&settings(json!({
+        "locked": false, "refreshSeconds": 300, "chartWidth": 360, "chartHeight": 180,
+        "position": { "x": work.x + 40.0, "y": work.y + 40.0 }
+    })));
+    session
+        .ticker
+        .wait_for(5.0, |snapshot| !snapshot.locked && (snapshot.ticker().x - work.x - 40.0).abs() < 1.0)
+        .ok_or("chart manipulation settings did not apply")?;
+    let opened = session.click("ticker", 5.0, |snapshot| snapshot.mode == "expanded")?;
+    let from = session.target("chart")?;
+    let to = POINT { x: from.x + 40, y: from.y + 30 };
+    let moved = session.gesture(
+        "drag open chart",
+        3.0,
+        |mouse, allowed| mouse.drag(from, to, allowed),
+        |snapshot| {
+            snapshot.mode == "expanded"
+                && (snapshot.ticker().x - opened.ticker().x - 40.0).abs() <= 2.0
+                && (snapshot.ticker().y - opened.ticker().y - 30.0).abs() <= 2.0
+        },
+    )?;
+    let scale = desktop::scale(desktop::hwnd(moved.hwnd));
+    let start = *moved.targets.get("chart").ok_or("open chart has no chart target")?;
+    let grip = session.target("resize")?;
+    let ticker = moved.ticker().center();
+    let dx = if grip.x > ticker.x { 80 } else { -80 };
+    let dy = if grip.y > ticker.y { 60 } else { -60 };
+    let grown = session.gesture(
+        "grow open chart",
+        3.0,
+        |mouse, allowed| mouse.drag(grip, POINT { x: grip.x + dx, y: grip.y + dy }, allowed),
+        |snapshot| {
+            snapshot.mode == "expanded"
+                && snapshot.targets.get("chart").is_some_and(|chart| {
+                    (chart.width - start.width - 80.0).abs() <= 2.0 && (chart.height - start.height - 60.0).abs() <= 2.0
+                })
+        },
+    )?;
+    if !grown.ticker().same_spot(&moved.ticker()) {
+        return Err("resizing moved the ticker anchor".to_string());
+    }
+    let grip = session.target("resize")?;
+    let shrunk = session.gesture(
+        "shrink open chart",
+        3.0,
+        |mouse, allowed| mouse.drag(grip, POINT { x: grip.x - dx / 2, y: grip.y - dy / 2 }, allowed),
+        |snapshot| {
+            snapshot.mode == "expanded"
+                && snapshot.targets.get("chart").is_some_and(|chart| {
+                    (chart.width - start.width - 40.0).abs() <= 2.0 && (chart.height - start.height - 30.0).abs() <= 2.0
+                })
+        },
+    )?;
+    let mut saved = session.ticker.saved_settings().ok_or("no saved settings after resize")?;
+    if (saved["chartWidth"].as_f64().unwrap_or_default() - 360.0 - 40.0 / scale).abs() > 1.0
+        || (saved["chartHeight"].as_f64().unwrap_or_default() - 180.0 - 30.0 / scale).abs() > 1.0
+    {
+        return Err(format!("resized dimensions were not saved in DIPs: {saved}"));
+    }
+    session.click("ticker", 5.0, |snapshot| snapshot.mode == "collapsed")?;
+    let reopened = session.click("ticker", 5.0, |snapshot| snapshot.mode == "expanded")?;
+    if !reopened.frame.same(&shrunk.frame) {
+        return Err(format!("reopened at {}, expected {}", reopened.frame, shrunk.frame));
+    }
+    let grip = session.target("resize")?;
+    saved["locked"] = json!(true);
+    session.ticker.write_settings(&saved);
+    session
+        .ticker
+        .wait_for(5.0, |snapshot| snapshot.locked && !snapshot.targets.contains_key("resize"))
+        .ok_or("locking did not remove the resize grip")?;
+    session.gesture(
+        "drag former resize grip while locked",
+        3.0,
+        |mouse, allowed| mouse.drag(grip, POINT { x: grip.x + dx, y: grip.y + dy }, allowed),
+        |snapshot| snapshot.mode == "expanded" && snapshot.frame.same(&reopened.frame),
+    )?;
+    if session.ticker.saved_settings() != Some(saved) {
+        return Err("dragging the locked corner changed saved settings".to_string());
+    }
+    Ok(format!(
+        "real input moved the open chart (40, 30), grew it (80, 60), shrank it (40, 30), saved DIP dimensions at scale {scale}, reopened at {}, and left the locked chart unchanged",
+        reopened.frame
+    ))
 }
 
 fn menu(report: &mut Report, session: &mut Session) {

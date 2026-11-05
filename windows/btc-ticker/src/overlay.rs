@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 
 use ticker_core::{
-    App, DragPhase, ExpandedLayout, OverlayEvent, Point, PressTarget, Rect, Screens, Size, Timeframe, ZoomStep,
-    placement,
+    App, DragPhase, ExpandedLayout, OverlayEvent, Point, PressTarget, Rect, Screens, Settings, Size, Timeframe,
+    ZoomStep, placement,
 };
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
@@ -13,11 +13,11 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetMessageExtraInfo, HWND_TOPMOST, IsWindowVisible, MA_NOACTIVATE, SW_HIDE,
-    SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos, ShowWindow,
-    WM_CAPTURECHANGED, WM_CLOSE, WM_DPICHANGED, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
-    WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_POPUP,
+    CreateWindowExW, DefWindowProcW, GetMessageExtraInfo, HWND_TOPMOST, IDC_ARROW, IDC_SIZENESW, IDC_SIZENWSE,
+    IsWindowVisible, LoadCursorW, MA_NOACTIVATE, SW_HIDE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOZORDER, SetCursor, SetWindowPos, ShowWindow, WM_CAPTURECHANGED, WM_CLOSE, WM_DPICHANGED, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SETCURSOR,
+    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows::core::{Result, w};
 
@@ -50,6 +50,7 @@ pub enum Pointer {
     },
     /// The cursor left the overlay.
     Left,
+    Cursor,
 }
 
 pub struct Overlay {
@@ -57,6 +58,7 @@ pub struct Overlay {
     renderer: Renderer,
     drawn: Drawn,
     press: Option<Press>,
+    resize: Option<Resize>,
     travel: wheel::Travel,
     /// Takes the wheel over the chart from the focused game while Windows routes the wheel to focus.
     grab: Option<wheel::Grab>,
@@ -69,12 +71,36 @@ struct Press {
     origin: Point,
 }
 
+struct Resize {
+    cursor: POINT,
+    original: Settings,
+    preview: Settings,
+    layout: ExpandedLayout,
+    scale: f64,
+    maximum: Size,
+}
+
+impl Resize {
+    fn moved(&mut self, cursor: POINT) {
+        let x = if self.layout.opens_right { 1.0 } else { -1.0 };
+        let y = if self.layout.opens_down { 1.0 } else { -1.0 };
+        self.preview.chart_width =
+            self.layout.chart.width / self.scale + x * f64::from(cursor.x - self.cursor.x) / self.scale;
+        self.preview.chart_height =
+            self.layout.chart.height / self.scale + y * f64::from(cursor.y - self.cursor.y) / self.scale;
+        self.preview.chart_width = self.preview.chart_width.min(self.maximum.width);
+        self.preview.chart_height = self.preview.chart_height.min(self.maximum.height);
+        self.preview = self.preview.clamped();
+    }
+}
+
 /// What the last frame put where, in panel coordinates, for hit testing and the snapshot.
 #[derive(Default)]
 struct Drawn {
     ticker: Rect,
     layout: Option<ExpandedLayout>,
     max_bars: usize,
+    resize: Option<Rect>,
 }
 
 impl Overlay {
@@ -103,6 +129,7 @@ impl Overlay {
             renderer: Renderer::new()?,
             drawn: Drawn::default(),
             press: None,
+            resize: None,
             travel: wheel::Travel::default(),
             grab: None,
         })
@@ -117,7 +144,60 @@ impl Overlay {
     }
 
     /// The overlay event a mouse message means, if any. Whether a press becomes a drag or a click is the core's call.
-    pub fn pointer(&mut self, pointer: Pointer) -> Option<OverlayEvent> {
+    pub fn pointer(&mut self, pointer: Pointer, app: &App) -> Option<OverlayEvent> {
+        if matches!(pointer, Pointer::Down { .. }) && self.over_resize() {
+            let layout = self.drawn.layout?;
+            let screens = win::screens();
+            let window = win::window_rect(self.hwnd);
+            let work = placement::screen_for(&window, &screens).map_or(screens.primary.work, |screen| screen.work);
+            let scale = win::scale(self.hwnd);
+            self.travel.reset();
+            self.resize = Some(Resize {
+                cursor: win::cursor(),
+                original: *app.settings(),
+                preview: *app.settings(),
+                layout,
+                scale,
+                maximum: Size {
+                    width: (work.width - 2.0 * ExpandedLayout::INSET) / scale,
+                    height: (work.height - layout.ticker.height - ExpandedLayout::INSET) / scale,
+                },
+            });
+            // SAFETY: captures this thread's own window without activating it.
+            unsafe { SetCapture(self.hwnd) };
+            return None;
+        }
+        if self.resize.is_some() {
+            match pointer {
+                Pointer::Move => {
+                    self.resize.as_mut()?.moved(win::cursor());
+                    if let Err(error) = self.draw(app, &win::screens()) {
+                        eprintln!("could not resize the overlay: {error}");
+                    }
+                    return None;
+                }
+                Pointer::Up | Pointer::Lost => {
+                    let mut resize = self.resize.take()?;
+                    // SAFETY: clear the gesture before the resulting WM_CAPTURECHANGED.
+                    let _ = unsafe { ReleaseCapture() };
+                    if matches!(pointer, Pointer::Up) {
+                        resize.moved(win::cursor());
+                        // An unchanged setting emits no core Render effect, even if the last preview differed.
+                        if resize.preview == *app.settings()
+                            && let Err(error) = self.draw(app, &win::screens())
+                        {
+                            eprintln!("could not finish resizing: {error}");
+                        }
+                        return Some(OverlayEvent::SettingsEdited(resize.preview));
+                    }
+                    if let Err(error) = self.draw(app, &win::screens()) {
+                        eprintln!("could not cancel resizing: {error}");
+                    }
+                    return None;
+                }
+                _ => {}
+            }
+        }
         match pointer {
             Pointer::Down { .. } => {
                 self.travel.reset();
@@ -150,8 +230,32 @@ impl Overlay {
                 self.travel.reset();
                 None
             }
+            Pointer::Cursor => {
+                let layout = self
+                    .resize
+                    .as_ref()
+                    .map(|resize| resize.layout)
+                    .or_else(|| self.drawn.layout.filter(|_| self.over_resize()));
+                let cursor = match layout {
+                    Some(layout) if layout.opens_down == layout.opens_right => IDC_SIZENWSE,
+                    Some(_) => IDC_SIZENESW,
+                    None => IDC_ARROW,
+                };
+                // SAFETY: standard shared cursors; Windows owns their lifetime.
+                unsafe {
+                    SetCursor(LoadCursorW(None, cursor).ok());
+                }
+                None
+            }
             Pointer::RightDown { .. } | Pointer::RightUp { .. } | Pointer::Wheel { .. } => None,
         }
+    }
+
+    fn over_resize(&self) -> bool {
+        let window = win::window_rect(self.hwnd);
+        let cursor = win::cursor();
+        let point = Point { x: f64::from(cursor.x) - window.x, y: f64::from(cursor.y) - window.y };
+        self.drawn.resize.is_some_and(|grip| grip.contains(point))
     }
 
     /// The zoom steps a wheel delta adds up to, when it lands on the expanded chart.
@@ -205,8 +309,18 @@ impl Overlay {
     }
 
     pub fn draw(&mut self, app: &App, screens: &Screens) -> Result<()> {
-        let settings = app.settings();
         let scale = win::scale(self.hwnd);
+        if self.resize.as_ref().is_some_and(|resize| {
+            resize.original != *app.settings()
+                || resize.scale != scale
+                || !app.overlay().is_visible()
+                || app.expanded().is_none()
+        }) {
+            self.resize = None;
+            // SAFETY: an external edit or hiding the window cancels its capture.
+            let _ = unsafe { ReleaseCapture() };
+        }
+        let settings = self.resize.as_ref().map_or(app.settings(), |resize| &resize.preview);
         let text = self.renderer.ticker_text(&app.display(), settings, scale)?;
         let ticker_frame = placement::ticker_frame(settings.position, text.size, screens);
         let expanded = match app.expanded() {
@@ -238,7 +352,9 @@ impl Overlay {
         let origin = POINT { x: origin.x as i32, y: origin.y as i32 };
         self.renderer
             .present(self.hwnd, &Frame { origin, size: frame.size(), ticker, text: &text, panel, settings, scale })?;
-        self.drawn = Drawn { ticker, layout: expanded.map(|(layout, ..)| layout), max_bars };
+        let layout = expanded.map(|(layout, ..)| layout);
+        let resize = layout.filter(|_| !settings.locked).map(|layout| crate::render::resize_grip(&layout, scale));
+        self.drawn = Drawn { ticker, layout, max_bars, resize };
         if self.drawn.layout.is_none() || !app.overlay().is_visible() {
             self.travel.reset();
         }
@@ -269,6 +385,9 @@ impl Overlay {
                 targets.insert(timeframe.spec().label.to_string(), on_screen(layout.timeframe_rect(timeframe)));
             }
             targets.insert("chart".to_string(), on_screen(layout.chart));
+        }
+        if let Some(grip) = self.drawn.resize {
+            targets.insert("resize".to_string(), on_screen(grip));
         }
         targets
     }
@@ -335,6 +454,10 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
             at: POINT { x: i32::from(lparam.0 as i16), y: i32::from((lparam.0 >> 16) as i16) },
         }),
         WM_MOUSELEAVE => Some(Pointer::Left),
+        WM_SETCURSOR => {
+            deliver(Event::Pointer(Pointer::Cursor));
+            return LRESULT(1);
+        }
         WM_DPICHANGED => {
             deliver(Event::Redraw);
             return LRESULT(0);
@@ -352,5 +475,44 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
         }
         // SAFETY: default handling.
         None => unsafe { DefWindowProcW(hwnd, message, wparam, lparam) },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resize_from_each_corner_scales_and_obeys_limits() {
+        for scale in [1.0, 1.5, 2.0] {
+            for (x, y) in [(100.0, 100.0), (1600.0, 100.0), (100.0, 900.0), (1600.0, 900.0)] {
+                let settings = Settings::default();
+                let layout = ExpandedLayout::new(
+                    Rect::new(x * scale, y * scale, 180.0 * scale, 28.0 * scale),
+                    Size { width: 30.0 * scale, height: 24.0 * scale },
+                    Size { width: settings.chart_width * scale, height: settings.chart_height * scale },
+                    Rect::new(0.0, 0.0, 1920.0 * scale, 1080.0 * scale),
+                );
+                let mut resize = Resize {
+                    cursor: POINT::default(),
+                    original: settings,
+                    preview: settings,
+                    layout,
+                    scale,
+                    maximum: Size { width: 800.0, height: 500.0 },
+                };
+                let dx = if layout.opens_right { 1 } else { -1 };
+                let dy = if layout.opens_down { 1 } else { -1 };
+                resize.moved(POINT { x: dx * (40.0 * scale) as i32, y: dy * (30.0 * scale) as i32 });
+                assert_eq!((resize.preview.chart_width, resize.preview.chart_height), (400.0, 210.0));
+                resize.moved(POINT { x: dx * 10000, y: dy * 10000 });
+                assert_eq!((resize.preview.chart_width, resize.preview.chart_height), (800.0, 500.0));
+                resize.moved(POINT { x: -dx * 10000, y: -dy * 10000 });
+                assert_eq!((resize.preview.chart_width, resize.preview.chart_height), (240.0, 120.0));
+                let grip = crate::render::resize_grip(&layout, scale);
+                assert_eq!(grip.mid_x() > layout.frame.width / 2.0, layout.opens_right);
+                assert_eq!(grip.mid_y() > layout.frame.height / 2.0, layout.opens_down);
+            }
+        }
     }
 }
