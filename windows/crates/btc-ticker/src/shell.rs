@@ -222,6 +222,12 @@ impl Shell {
         {
             self.probe.foreign_presses += 1;
         }
+        if let Pointer::Wheel { delta, at } = pointer {
+            for step in self.overlay.wheel(delta, at) {
+                self.handle(Input::Overlay(OverlayEvent::Zoom(step)));
+            }
+            return;
+        }
         if let Pointer::RightUp { at } = pointer {
             self.popup = None;
             match Popup::open(self.overlay.hwnd(), at, self.app.settings().locked, &win::screens()) {

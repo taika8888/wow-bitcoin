@@ -4,22 +4,27 @@
 use std::collections::BTreeMap;
 
 use ticker_core::{
-    App, DragPhase, ExpandedLayout, OverlayEvent, Point, PressTarget, Rect, Screens, Size, Timeframe, placement,
+    App, DragPhase, ExpandedLayout, OverlayEvent, Point, PressTarget, Rect, Screens, Size, Timeframe, ZoomStep,
+    placement,
 };
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
-use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
+use windows::Win32::UI::Controls::WM_MOUSELEAVE;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    ReleaseCapture, SetCapture, TME_LEAVE, TRACKMOUSEEVENT, TrackMouseEvent,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetMessageExtraInfo, HWND_TOPMOST, IsWindowVisible, MA_NOACTIVATE, SW_HIDE,
     SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowPos, ShowWindow,
     WM_CAPTURECHANGED, WM_CLOSE, WM_DPICHANGED, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
-    WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    WM_MOUSEWHEEL, WM_RBUTTONDOWN, WM_RBUTTONUP, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_POPUP,
 };
 use windows::core::{Result, w};
 
 use crate::menu::Command;
 use crate::render::{Frame, Panel, Renderer};
 use crate::shell::{Event, deliver};
-use crate::win;
+use crate::{wheel, win};
 
 /// Mouse input on the overlay, in screen pixels. `extra` is the input's `dwExtraInfo`, which tells the end-to-end
 /// check's own clicks from a person's.
@@ -38,6 +43,13 @@ pub enum Pointer {
     RightUp {
         at: POINT,
     },
+    /// A wheel notch, a touchpad scroll or a touchpad pinch, `delta` in `WHEEL_DELTA` units, at a screen point.
+    Wheel {
+        delta: i32,
+        at: POINT,
+    },
+    /// The cursor left the overlay.
+    Left,
 }
 
 pub struct Overlay {
@@ -45,6 +57,9 @@ pub struct Overlay {
     renderer: Renderer,
     drawn: Drawn,
     press: Option<Press>,
+    travel: wheel::Travel,
+    /// Takes the wheel over the chart from the focused game while Windows routes the wheel to focus.
+    grab: Option<wheel::Grab>,
 }
 
 /// Where the button went down and where the window was then, both on screen.
@@ -83,7 +98,14 @@ impl Overlay {
                 None,
             )?
         };
-        Ok(Overlay { hwnd, renderer: Renderer::new()?, drawn: Drawn::default(), press: None })
+        Ok(Overlay {
+            hwnd,
+            renderer: Renderer::new()?,
+            drawn: Drawn::default(),
+            press: None,
+            travel: wheel::Travel::default(),
+            grab: None,
+        })
     }
 
     pub fn hwnd(&self) -> HWND {
@@ -104,7 +126,10 @@ impl Overlay {
                 Some(OverlayEvent::Pressed)
             }
             Pointer::Move => {
-                let press = self.press?;
+                let Some(press) = self.press else {
+                    self.hover();
+                    return None;
+                };
                 let cursor = win::cursor();
                 let distance = f64::from(cursor.x - press.cursor.x).hypot(f64::from(cursor.y - press.cursor.y));
                 Some(OverlayEvent::PointerMoved { distance })
@@ -119,8 +144,50 @@ impl Overlay {
                 };
                 Some(OverlayEvent::Released { over, ticker_origin: self.dropped_at() })
             }
-            Pointer::RightDown { .. } | Pointer::RightUp { .. } => None,
+            Pointer::Left => {
+                self.grab = None;
+                self.travel.reset();
+                None
+            }
+            Pointer::RightDown { .. } | Pointer::RightUp { .. } | Pointer::Wheel { .. } => None,
         }
+    }
+
+    /// The zoom steps a wheel delta adds up to, when it lands on the expanded chart.
+    pub fn wheel(&mut self, delta: i32, at: POINT) -> Vec<ZoomStep> {
+        let at = Point { x: f64::from(at.x), y: f64::from(at.y) };
+        if !self.chart_on_screen().is_some_and(|chart| chart.contains(at)) {
+            self.travel.reset();
+            return Vec::new();
+        }
+        self.travel.add(delta)
+    }
+
+    /// Over the chart while Windows sends the wheel to the focused window, grab it until the cursor leaves.
+    fn hover(&mut self) {
+        let cursor = win::cursor();
+        let cursor = Point { x: f64::from(cursor.x), y: f64::from(cursor.y) };
+        let chart = self.chart_on_screen().filter(|chart| chart.contains(cursor) && !wheel::follows_cursor());
+        match (chart, &self.grab) {
+            (None, _) => self.grab = None,
+            (Some(chart), Some(grab)) => grab.retarget(chart),
+            (Some(chart), None) => {
+                self.grab = wheel::Grab::new(chart);
+                let mut leave = TRACKMOUSEEVENT {
+                    cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+                    dwFlags: TME_LEAVE,
+                    hwndTrack: self.hwnd,
+                    dwHoverTime: 0,
+                };
+                // SAFETY: asks for one WM_MOUSELEAVE to this thread's own window.
+                let _ = unsafe { TrackMouseEvent(&mut leave) };
+            }
+        }
+    }
+
+    fn chart_on_screen(&self) -> Option<Rect> {
+        let window = win::window_rect(self.hwnd);
+        self.drawn.layout.map(|layout| layout.chart.offset(window.x, window.y))
     }
 
     /// Keeps the window under the cursor while the core says the press is a drag.
@@ -169,6 +236,11 @@ impl Overlay {
             .present(self.hwnd, &Frame { origin, size: frame.size(), ticker, text: &text, panel, settings, scale })?;
         self.drawn = Drawn { ticker, layout: expanded.map(|(layout, ..)| layout), max_bars };
         self.show(app.overlay().is_visible());
+        match (self.chart_on_screen().filter(|_| app.overlay().is_visible()), &self.grab) {
+            (Some(chart), Some(grab)) => grab.retarget(chart),
+            (None, Some(_)) => self.grab = None,
+            _ => {}
+        }
         Ok(())
     }
 
@@ -251,6 +323,11 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
         WM_CAPTURECHANGED => Some(Pointer::Lost),
         WM_RBUTTONDOWN => Some(Pointer::RightDown { extra: extra() }),
         WM_RBUTTONUP => Some(Pointer::RightUp { at: win::cursor() }),
+        WM_MOUSEWHEEL => Some(Pointer::Wheel {
+            delta: wheel::delta(wparam.0),
+            at: POINT { x: i32::from(lparam.0 as i16), y: i32::from((lparam.0 >> 16) as i16) },
+        }),
+        WM_MOUSELEAVE => Some(Pointer::Left),
         WM_DPICHANGED => {
             deliver(Event::Redraw);
             return LRESULT(0);

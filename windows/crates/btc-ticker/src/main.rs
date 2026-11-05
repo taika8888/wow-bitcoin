@@ -11,6 +11,7 @@ mod settings_store;
 mod settings_window;
 mod shell;
 mod tray;
+mod wheel;
 mod win;
 
 use std::path::PathBuf;
