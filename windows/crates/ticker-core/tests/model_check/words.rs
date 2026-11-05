@@ -1,6 +1,6 @@
 //! Inputs in the code's own words, so a counterexample reads as a sequence of things a person or the OS did.
 
-use ticker_core::{Frontmost, OverlayEvent, PressTarget, Settings};
+use ticker_core::{Frontmost, OverlayEvent, PressTarget, Settings, ZoomStep};
 
 pub fn overlay_event(event: &OverlayEvent) -> String {
     match event {
@@ -15,6 +15,8 @@ pub fn overlay_event(event: &OverlayEvent) -> String {
             format!("release over {target} (ticker line at {}, {})", ticker_origin.x, ticker_origin.y)
         }
         OverlayEvent::ToggleLock => "toggle Lock".to_string(),
+        OverlayEvent::Zoom(ZoomStep::In) => "scroll up over the chart to zoom in".to_string(),
+        OverlayEvent::Zoom(ZoomStep::Out) => "scroll down over the chart to zoom out".to_string(),
         OverlayEvent::AppActivated(app) => format!("{} comes to the foreground", frontmost(*app)),
         OverlayEvent::SettingsEdited(settings) => format!("edit settings to {}", settings_words(settings)),
     }
@@ -31,10 +33,11 @@ pub fn frontmost(app: Frontmost) -> &'static str {
 pub fn settings_words(settings: &Settings) -> String {
     let position = settings.position.map_or("default".to_string(), |point| format!("({}, {})", point.x, point.y));
     format!(
-        "locked {}, onlyWhenWoWActive {}, refresh {} s, timeframe {}, position {position}",
+        "locked {}, onlyWhenWoWActive {}, refresh {} s, timeframe {}, zoom {}, position {position}",
         settings.locked,
         settings.only_when_wow_active,
         settings.refresh_seconds,
-        settings.timeframe.spec().label
+        settings.timeframe.spec().label,
+        settings.zoom.label()
     )
 }

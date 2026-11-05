@@ -1,4 +1,4 @@
-use crate::market::Timeframe;
+use crate::market::{Timeframe, ZoomStep};
 use crate::settings::{ScreenPoint, Settings};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -76,6 +76,8 @@ pub enum OverlayEvent {
         ticker_origin: ScreenPoint,
     },
     ToggleLock,
+    /// Steps the chart one rung along the zoom ladder, and only while the chart is on screen.
+    Zoom(ZoomStep),
     AppActivated(Frontmost),
     SettingsEdited(Settings),
 }
@@ -138,6 +140,11 @@ impl OverlayState {
                 }
             }
             OverlayEvent::ToggleLock => next.settings.locked = !self.settings.locked,
+            OverlayEvent::Zoom(step) => {
+                if self.expanded && self.is_visible() {
+                    next.settings.zoom = self.settings.zoom.stepped(step);
+                }
+            }
             OverlayEvent::AppActivated(app) => next.frontmost = app,
             OverlayEvent::SettingsEdited(settings) => next.settings = settings.clamped(),
         }

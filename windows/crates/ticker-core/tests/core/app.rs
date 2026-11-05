@@ -7,7 +7,7 @@ use ticker_core::kraken::{self, CANDLES_TIMEOUT, TICKER_URL};
 use ticker_core::{
     App, CandleLoad, ChartNotice, Effect, FeedStatus, FetchFailure, Frontmost, HttpOutcome, Input, KrakenError,
     OverlayEvent, OverlayMode, PressTarget, Quote, Rect, RequestId, ScreenPoint, Settings, Snapshot, SnapshotWindow,
-    Timeframe, Timestamp,
+    Timeframe, Timestamp, Zoom, ZoomStep,
 };
 
 use crate::chart::{DEFAULT_BUDGET, T0};
@@ -456,6 +456,30 @@ fn the_expanded_chart_reads_back_the_recorded_candles() {
     shell.click(PressTarget::Body);
     assert_eq!(shell.app.overlay().mode(), OverlayMode::Collapsed);
     assert_eq!((shell.app.expanded(), shell.app.chart(DEFAULT_BUDGET)), (None, None));
+}
+
+#[test]
+fn zooming_the_chart_saves_and_redraws_from_the_candles_already_held() {
+    let mut shell = expanded_on(Timeframe::M15);
+    shell.finish_candles(answered(fixtures::OHLC_15), 0.0);
+    let drawn = |shell: &Shell| shell.app.chart(DEFAULT_BUDGET).map(|chart| (chart.candle_count, chart.bars.len()));
+    assert_eq!(drawn(&shell), Some((96, 96)));
+
+    let effects = shell.overlay(OverlayEvent::Zoom(ZoomStep::Out));
+    assert_eq!(saved(&effects), [Settings { zoom: Zoom::Double, ..*shell.app.settings() }]);
+    assert!(renders(&effects) && candle_request(&effects).is_none(), "{effects:?}");
+    assert_eq!(drawn(&shell), Some((192, 96)), "192 candles in pairs fit the 150-bar budget");
+    for _ in 0..3 {
+        shell.overlay(OverlayEvent::Zoom(ZoomStep::Out));
+    }
+    assert_eq!(shell.app.settings().zoom, Zoom::All);
+    assert_eq!(drawn(&shell), Some((720, 144)), "every candle held, five to a bar");
+    assert!(shell.overlay(OverlayEvent::Zoom(ZoomStep::Out)).is_empty(), "the widest view stays put and saves nothing");
+
+    shell.click(PressTarget::Body);
+    assert!(shell.overlay(OverlayEvent::Zoom(ZoomStep::In)).is_empty(), "a collapsed overlay ignores the wheel");
+    shell.click(PressTarget::Body);
+    assert_eq!(shell.app.settings().zoom, Zoom::All, "the zoom outlives collapsing");
 }
 
 #[test]

@@ -5,7 +5,7 @@
 
 use ticker_core::{
     App, DragPhase, Effect, FeedSchedule, FeedStatus, Frontmost, HttpOutcome, Input, OverlayEvent, OverlayMode,
-    PressTarget, Quote, RequestId, ScreenPoint, Settings, Timeframe, Timestamp,
+    PressTarget, Quote, RequestId, ScreenPoint, Settings, Timeframe, Timestamp, Zoom, ZoomStep,
 };
 
 use crate::engine::{Model, Report, explore};
@@ -199,6 +199,8 @@ impl AppModel {
                 release(PressTarget::Outside),
                 release(PressTarget::Timeframe(Timeframe::H4)),
                 OverlayEvent::ToggleLock,
+                OverlayEvent::Zoom(ZoomStep::In),
+                OverlayEvent::Zoom(ZoomStep::Out),
                 OverlayEvent::AppActivated(Frontmost::Ticker),
             ]);
         }
@@ -343,6 +345,7 @@ struct Reached {
     backed_off: bool,
     dragging: bool,
     candles_failed: bool,
+    zoomed_while_loading: bool,
 }
 
 fn check(name: &'static str, alphabet: Alphabet, depth: usize) -> (Report, Reached) {
@@ -357,6 +360,8 @@ fn check(name: &'static str, alphabet: Alphabet, depth: usize) -> (Report, Reach
         reached.backed_off |= world.quote_failures >= 2;
         reached.dragging |= app.overlay().drag() == DragPhase::Dragging;
         reached.candles_failed |= Timeframe::ALL.iter().any(|t| app.chart_load(*t).failure().is_some());
+        reached.zoomed_while_loading |= app.settings().zoom != Zoom::Standard
+            && app.expanded().is_some_and(|(_, load)| load.is_loading() || load.series().is_some());
     });
     println!("{} ({} invariants)", report.summary(), INVARIANTS.len());
     assert!(report.violations.is_empty(), "{}", report.failures());
@@ -374,6 +379,10 @@ fn every_interleaving_of_every_input_keeps_the_app_invariants() {
     assert!(reached.two_timeframes_loading, "two timeframes loading at once must be reachable");
     assert!(reached.stale, "a stale quote must be reachable, or the status invariant never sees one");
     assert!(reached.offline, "offline must be reachable");
+    assert!(
+        reached.zoomed_while_loading,
+        "a zoomed chart with candles out or loaded must be reachable, or zooming is never checked against fetches"
+    );
 }
 
 #[test]
