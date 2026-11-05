@@ -173,8 +173,15 @@ func describe(_ rect: CGRect) -> String {
     "\(Int(rect.minX)),\(Int(rect.minY)) \(Int(rect.width))x\(Int(rect.height))"
 }
 
+/// Every run keeps the overlay in the top-right corner of the main screen, out of the way of whoever is at the desk.
+let corner = NSScreen.screens.first.map { #""position":{"x":\#($0.visibleFrame.maxX - 20),"y":\#($0.visibleFrame.maxY - 5)},"# } ?? ""
+
+func cornered(_ json: String) -> String {
+    json.contains(#""position""#) ? json : "{" + corner + json.dropFirst()
+}
+
 func writeSettings(_ json: String) {
-    run("/usr/bin/defaults", ["write", suite, settingsKey, "-string", json])
+    run("/usr/bin/defaults", ["write", suite, settingsKey, "-string", cornered(json)])
 }
 
 try? FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
@@ -186,7 +193,7 @@ let app = Process()
 app.executableURL = appURL.appendingPathComponent("Contents/MacOS/BTCTicker")
 app.environment = ProcessInfo.processInfo.environment.merging([
     "BTCTICKER_STATE_FILE": stateURL.path,
-    "BTCTICKER_SETTINGS": #"{"showLabel":true,"showChange":true,"decimals":0,"fontSize":15,"locked":false,"onlyWhenWoWActive":false,"refreshSeconds":300}"#,
+    "BTCTICKER_SETTINGS": cornered(#"{"showLabel":true,"showChange":true,"decimals":0,"fontSize":15,"locked":false,"onlyWhenWoWActive":false,"refreshSeconds":300}"#),
 ]) { $1 }
 do {
     try app.run()

@@ -127,6 +127,31 @@ private let defaultBudget = 150
         #expect(chart.timeDomain == t0...t0.addingTimeInterval(30 * 60))
     }
 
+    @Test(arguments: recorded.indices, Zoom.allCases)
+    func theAxesGetAFewRoundTicksInsideTheDomain(index: Int, zoom: Zoom) throws {
+        let candles = try Kraken.parseCandles(try fixture(recorded[index].file))
+        let chart = try #require(CandleChart(candles: candles, timeframe: recorded[index].timeframe, zoom: zoom, maxBars: defaultBudget))
+        let prices = chart.priceTicks
+        #expect((3...8).contains(prices.count), "\(prices.count) price ticks")
+        #expect(prices.allSatisfy(chart.priceDomain.contains))
+        let step = prices[1] - prices[0]
+        let digit = step / pow(10, log10(step).rounded(.down))
+        #expect([1, 2, 5].contains { abs(digit - $0) < 1e-9 }, "price step \(step)")
+
+        let utcOffset = -5 * 3600
+        let times = chart.timeTicks(utcOffset: utcOffset)
+        #expect((3...8).contains(times.count), "\(times.count) time ticks")
+        #expect(times.allSatisfy(chart.timeDomain.contains))
+        let timeStep = times[1].timeIntervalSince(times[0])
+        #expect(timeStep.truncatingRemainder(dividingBy: 60) == 0, "time step \(timeStep)")
+        #expect(times.allSatisfy { ($0.timeIntervalSince1970 + Double(utcOffset)).truncatingRemainder(dividingBy: timeStep) == 0 }, "ticks fall on round local times")
+    }
+
+    @Test func aChartWithNoSpanHasNoTicks() throws {
+        let chart = try #require(CandleChart(candles: [candle(0, 0)], timeframe: .m1, zoom: .standard, maxBars: defaultBudget))
+        #expect(chart.priceTicks.isEmpty)
+    }
+
     @Test func noCandlesNoChart() {
         #expect(CandleChart(candles: [], timeframe: .h4, zoom: .standard, maxBars: defaultBudget) == nil)
     }
