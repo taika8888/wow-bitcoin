@@ -211,6 +211,21 @@ if let edited, let before {
     report("FAIL", "settings-live", "snapshot did not reflect the edit within 5s; last: '\(last?.text ?? "none")' locked \(last?.locked ?? false) height \(Int(last?.frame.height ?? 0))")
 }
 
+let frontNow = frontmostBundleID()
+let shouldShow = frontNow == wowBundleID
+writeSettings(#"{"showLabel":false,"showChange":true,"decimals":2,"fontSize":30,"locked":true,"onlyWhenWoWActive":true}"#)
+let gated = waitFor(5) { () -> (Snapshot, Bool)? in
+    guard let snapshot = Snapshot.read(), snapshot.visible == shouldShow else { return nil }
+    let listed = onScreenWindows().contains { $0.number == snapshot.windowNumber }
+    return listed == shouldShow ? (snapshot, listed) : nil
+}
+if let gated {
+    report("PASS", "only-when-wow", "frontmost \(frontNow): snapshot visible \(gated.0.visible), on-screen list \(gated.1 ? "has" : "lacks") the overlay")
+} else {
+    let last = Snapshot.read()
+    report("FAIL", "only-when-wow", "frontmost \(frontNow) so visible should be \(shouldShow); snapshot visible \(last?.visible ?? false)")
+}
+
 let frontAfterEdit = frontmostBundleID()
 if frontBefore == frontAfterLaunch, frontBefore == frontAfterEdit {
     report("PASS", "focus-kept", "frontmost stayed \(frontBefore) through launch and a settings edit")
