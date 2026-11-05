@@ -120,6 +120,7 @@ impl Overlay {
     pub fn pointer(&mut self, pointer: Pointer) -> Option<OverlayEvent> {
         match pointer {
             Pointer::Down { .. } => {
+                self.travel.reset();
                 self.press = Some(Press { cursor: win::cursor(), origin: win::window_rect(self.hwnd).origin() });
                 // SAFETY: captures the mouse for this thread's own window.
                 unsafe { SetCapture(self.hwnd) };
@@ -163,25 +164,28 @@ impl Overlay {
         self.travel.add(delta)
     }
 
-    /// Over the chart while Windows sends the wheel to the focused window, grab it until the cursor leaves.
+    /// Wheel travel lasts only while the cursor stays on the chart. Over it while Windows sends the wheel to the focused
+    /// window, grab the wheel until the cursor leaves.
     fn hover(&mut self) {
         let cursor = win::cursor();
         let cursor = Point { x: f64::from(cursor.x), y: f64::from(cursor.y) };
-        let chart = self.chart_on_screen().filter(|chart| chart.contains(cursor) && !wheel::follows_cursor());
-        match (chart, &self.grab) {
-            (None, _) => self.grab = None,
-            (Some(chart), Some(grab)) => grab.retarget(chart),
-            (Some(chart), None) => {
-                self.grab = wheel::Grab::new(chart);
-                let mut leave = TRACKMOUSEEVENT {
-                    cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
-                    dwFlags: TME_LEAVE,
-                    hwndTrack: self.hwnd,
-                    dwHoverTime: 0,
-                };
-                // SAFETY: asks for one WM_MOUSELEAVE to this thread's own window.
-                let _ = unsafe { TrackMouseEvent(&mut leave) };
-            }
+        let Some(chart) = self.chart_on_screen().filter(|chart| chart.contains(cursor)) else {
+            self.travel.reset();
+            self.grab = None;
+            return;
+        };
+        let mut leave = TRACKMOUSEEVENT {
+            cbSize: size_of::<TRACKMOUSEEVENT>() as u32,
+            dwFlags: TME_LEAVE,
+            hwndTrack: self.hwnd,
+            dwHoverTime: 0,
+        };
+        // SAFETY: asks for one WM_MOUSELEAVE to this thread's own window.
+        let _ = unsafe { TrackMouseEvent(&mut leave) };
+        match (wheel::follows_cursor(), &self.grab) {
+            (true, _) => self.grab = None,
+            (false, Some(grab)) => grab.retarget(chart),
+            (false, None) => self.grab = wheel::Grab::new(chart, self.hwnd),
         }
     }
 
@@ -235,6 +239,9 @@ impl Overlay {
         self.renderer
             .present(self.hwnd, &Frame { origin, size: frame.size(), ticker, text: &text, panel, settings, scale })?;
         self.drawn = Drawn { ticker, layout: expanded.map(|(layout, ..)| layout), max_bars };
+        if self.drawn.layout.is_none() || !app.overlay().is_visible() {
+            self.travel.reset();
+        }
         self.show(app.overlay().is_visible());
         match (self.chart_on_screen().filter(|_| app.overlay().is_visible()), &self.grab) {
             (Some(chart), Some(grab)) => grab.retarget(chart),

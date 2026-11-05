@@ -635,6 +635,35 @@ fn zoom(report: &mut Report, session: &mut Session, shots: &Path) {
             back.is_ok()
         ),
     );
+
+    let half = session.gesture(
+        "half a notch away from the user",
+        0.5,
+        |mouse, allowed| mouse.wheel(center, WHEEL_DELTA / 2, 1, allowed),
+        |_| true,
+    );
+    let closed = half.and_then(|_| session.click("ticker", 5.0, |snapshot| snapshot.mode == "collapsed"));
+    let reopened = closed.and_then(|_| session.click("ticker", 5.0, shows("×1", 120)));
+    let second_half = reopened.and_then(|_| {
+        session.gesture(
+            "another half notch away from the user",
+            0.5,
+            |mouse, allowed| mouse.wheel(center, WHEEL_DELTA / 2, 1, allowed),
+            |_| true,
+        )
+    });
+    let zoomed = session.ticker.wait_for(1.5, |snapshot| snapshot.zoom.as_deref() != Some("×1"));
+    report.check(
+        second_half.is_ok() && zoomed.is_none(),
+        "zoom-travel-reset",
+        match (&second_half, &zoomed) {
+            (Err(error), _) => error.clone(),
+            (Ok(_), Some(zoomed)) => {
+                format!("half a notch, a collapse and reopen, then half a notch zoomed to {:?}", zoomed.zoom)
+            }
+            (Ok(_), None) => "half a notch, a collapse and reopen, then half a notch: still x1".to_string(),
+        },
+    );
 }
 
 fn screenshot(report: &mut Report, snapshot: &Snapshot, shots: &Path, name: &str, candles: bool) {

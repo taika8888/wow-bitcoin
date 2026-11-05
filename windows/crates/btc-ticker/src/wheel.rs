@@ -6,16 +6,13 @@
 use std::cell::Cell;
 
 use ticker_core::{Point, Rect, ZoomStep};
-use windows::Win32::Foundation::{LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, HC_ACTION, HHOOK, MOUSEWHEEL_ROUTING_MOUSE_POS, MSLLHOOKSTRUCT, SPI_GETMOUSEWHEELROUTING,
-    SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowsHookExW, SystemParametersInfoW, UnhookWindowsHookEx, WH_MOUSE_LL,
-    WHEEL_DELTA, WM_MOUSEWHEEL,
+    CallNextHookEx, HC_ACTION, HHOOK, MOUSEWHEEL_ROUTING_MOUSE_POS, MSLLHOOKSTRUCT, PostMessageW,
+    SPI_GETMOUSEWHEELROUTING, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SetWindowsHookExW, SystemParametersInfoW,
+    UnhookWindowsHookEx, WH_MOUSE_LL, WHEEL_DELTA, WM_MOUSEWHEEL,
 };
-
-use crate::overlay::Pointer;
-use crate::shell::{Event, deliver};
 
 /// Wheel travel toward the next zoom step. A notched wheel moves `WHEEL_DELTA` a notch, one step. A precision touchpad
 /// scrolls, and pinches as Ctrl+wheel, in smaller deltas that add up to a step. Turning the other way starts over.
@@ -61,15 +58,15 @@ pub fn follows_cursor() -> bool {
 }
 
 thread_local! {
-    static GRABBED: Cell<Option<Rect>> = const { Cell::new(None) };
+    static GRABBED: Cell<Option<(Rect, HWND)>> = const { Cell::new(None) };
 }
 
-/// While it lives, wheel input over `chart` (screen pixels) goes to the overlay and not to the focused window.
+/// While it lives, wheel input over `chart` (screen pixels) goes to `overlay` and not to the focused window.
 pub struct Grab(HHOOK);
 
 impl Grab {
-    pub fn new(chart: Rect) -> Option<Grab> {
-        GRABBED.set(Some(chart));
+    pub fn new(chart: Rect, overlay: HWND) -> Option<Grab> {
+        GRABBED.set(Some((chart, overlay)));
         // SAFETY: the hook procedure is a plain function that lives for the whole process; the hook runs on this
         // thread's message loop, which `GRABBED` belongs to.
         let hook = unsafe {
@@ -80,7 +77,7 @@ impl Grab {
     }
 
     pub fn retarget(&self, chart: Rect) {
-        GRABBED.set(Some(chart));
+        GRABBED.set(GRABBED.get().map(|(_, overlay)| (chart, overlay)));
     }
 }
 
@@ -92,15 +89,18 @@ impl Drop for Grab {
     }
 }
 
-/// Runs for every mouse event on the system while a `Grab` lives, so it decides at once and defers the zoom.
+/// Runs for every mouse event on the system while a `Grab` lives. Windows drops a hook that overruns
+/// `LowLevelHooksTimeout`, after which the game would get the wheel, so this posts the wheel to the overlay and returns.
 unsafe extern "system" fn procedure(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == HC_ACTION as i32 && wparam.0 == WM_MOUSEWHEEL as usize {
         // SAFETY: for WM_MOUSEWHEEL, lparam points at the event's MSLLHOOKSTRUCT for the duration of the call.
         let info = unsafe { &*(lparam.0 as *const MSLLHOOKSTRUCT) };
         let at = Point { x: f64::from(info.pt.x), y: f64::from(info.pt.y) };
-        if GRABBED.get().is_some_and(|chart| chart.contains(at)) {
-            let at = POINT { x: info.pt.x, y: info.pt.y };
-            deliver(Event::Pointer(Pointer::Wheel { delta: delta(info.mouseData as usize), at }));
+        if let Some((_, overlay)) = GRABBED.get().filter(|(chart, _)| chart.contains(at)) {
+            let wheel = WPARAM(info.mouseData as usize & 0xFFFF_0000);
+            let at = LPARAM(((info.pt.y as u16 as isize) << 16) | info.pt.x as u16 as isize);
+            // SAFETY: posts to this thread's own window.
+            let _ = unsafe { PostMessageW(Some(overlay), WM_MOUSEWHEEL, wheel, at) };
             return LRESULT(1);
         }
     }
