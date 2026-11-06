@@ -1,0 +1,68 @@
+name: Bug report
+description: Something in BTC Ticker does not work as described.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        To report a security problem, don't use this form. Follow SECURITY.md instead.
+        Before you attach a screenshot, crop it to the ticker and remove anything personal.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: input
+    id: os-version
+    attributes:
+      label: OS version
+      description: For example, Windows 11 24H2 or macOS 15.1.
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      description: The release you downloaded, for example v0.1.0, or the commit you built from.
+    validations:
+      required: true
+  - type: dropdown
+    id: wow-display-mode
+    attributes:
+      label: WoW display mode
+      options:
+        - Windowed
+        - Windowed (Fullscreen)
+        - Fullscreen
+        - WoW was not running
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected to see instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start BTC Ticker.
+        2. Click the ticker.
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings
+      description: |
+        Optional. On Windows, paste %APPDATA%\BTCTicker\settings.json.
+        On macOS, paste the output of `defaults read dev.local.btcticker btcTickerSettings`.
+      render: json
