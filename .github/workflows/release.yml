@@ -1,0 +1,125 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  # A pull request that edits this file test-builds both packages.
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Reads the cache that windows.yml's verify job saves on main, and never writes one of its own.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: verify
+          save-if: false
+
+      - name: Build and zip btc-ticker.exe
+        shell: powershell
+        run: |
+          cargo build --release --locked -p btc-ticker
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Compress-Archive -Path target\release\btc-ticker.exe -DestinationPath btc-ticker-windows-x64.zip
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: btc-ticker-windows-x64
+          path: btc-ticker-windows-x64.zip
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      # The app needs Swift 6.1 (README). The image's default Xcode is used as shipped, and this fails if it is older.
+      - name: Swift toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+          version=$(swift --version 2>&1 | sed -nE 's/.*Swift version ([0-9]+\.[0-9]+(\.[0-9]+)?).*/\1/p' | head -n 1)
+          IFS=. read -r major minor _ <<<"$version"
+          if (( ${major:-0} < 6 || (${major:-0} == 6 && ${minor:-0} < 1) )); then
+            echo "::error::Swift '$version' is older than 6.1"
+            exit 1
+          fi
+
+      # bundle.sh copies Support/Info.plist and then signs, so the version goes into the source plist first. Both keys
+      # take one to three integers, so a tag such as v1.2.0-beta fails here instead of shipping an invalid plist.
+      - name: Set the app version from the tag
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          if ! [[ "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            echo "::error::Tag '$TAG' is not v followed by one to three dot-separated integers"
+            exit 1
+          fi
+          plutil -replace CFBundleShortVersionString -string "$version" Support/Info.plist
+          plutil -replace CFBundleVersion -string "$version" Support/Info.plist
+
+      # bundle.sh signs the app ad hoc, so the zip needs no second codesign.
+      - name: Bundle and zip BTC Ticker.app
+        run: |
+          app="build/BTC Ticker.app"
+          scripts/bundle.sh
+          codesign --verify --strict --verbose=2 "$app"
+          ditto -c -k --keepParent "$app" btc-ticker-macos.zip
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: btc-ticker-macos
+          path: btc-ticker-macos.zip
+          if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Fails if a release for the tag already exists, so a rerun never replaces the assets of a published release.
+      - name: Create the draft release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          sha256sum btc-ticker-windows-x64.zip btc-ticker-macos.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --generate-notes \
+            btc-ticker-windows-x64.zip btc-ticker-macos.zip SHA256SUMS.txt
