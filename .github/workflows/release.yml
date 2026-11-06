@@ -98,3 +98,28 @@ jobs:
           name: btc-ticker-macos
           path: btc-ticker-macos.zip
           if-no-files-found: error
+
+  publish:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Fails if a release for the tag already exists, so a rerun never replaces the assets of a published release.
+      - name: Create the draft release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          sha256sum btc-ticker-windows-x64.zip btc-ticker-macos.zip > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --generate-notes \
+            btc-ticker-windows-x64.zip btc-ticker-macos.zip SHA256SUMS.txt
