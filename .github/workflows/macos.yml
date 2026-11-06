@@ -1,7 +1,9 @@
 name: macos
 
 on:
+  # Branches run through their pull request; also running on their pushes would bill every commit twice.
   push:
+    branches: [main]
     paths:
       - "Package.swift"
       - "Package.resolved"
