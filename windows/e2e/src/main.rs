@@ -196,8 +196,10 @@ fn run(report: &mut Report, app: &Path, shots: &Path, pid_file: Option<PathBuf>)
 
     feed(report, &session);
     window(report, &session, &monitor);
+    topmost_rival(report, &session);
     settings_file(report, &session);
     only_when_wow(report, &session, &this, &work_area);
+    refused_focus_grab(report, &session, &this, &work_area);
     clamped(report, &session, &work_area);
     chart(report, &mut session, shots, &work_area);
     opacity_zero(report, &mut session);
@@ -403,6 +405,80 @@ fn only_when_wow(report: &mut Report, session: &Session, this: &Path, work_area:
         report.line("INCONCLUSIVE", "only-when-wow", format!("Windows refused a foreground switch; {detail}"));
     } else {
         report.check(hidden && back, "only-when-wow", detail);
+    }
+}
+
+/// An always-on-top window that raises itself sends no foreground event, so only the app's own timer can notice.
+fn topmost_rival(report: &mut Report, session: &Session) {
+    let (overlay, game) = (session.overlay(), session.game.hwnd);
+    let raised = desktop::set_topmost(game, true);
+    let buried = desktop::is_above(game, overlay);
+    let started = std::time::Instant::now();
+    let back = wait_until(3.0, || desktop::is_above(overlay, game).filter(|above| *above));
+    let seconds = started.elapsed().as_secs_f64();
+    let in_front = desktop::foreground() == game;
+    desktop::set_topmost(game, false);
+    let back = back.map_or("not within 3 s".to_string(), |_| format!("after {seconds:.1} s"));
+    let detail = format!(
+        "the stand-in Wow.exe made itself topmost {raised} and was then above the overlay {buried:?}; the overlay back on top {back}; stand-in still foreground {in_front}"
+    );
+    if !raised || buried != Some(true) {
+        report.line("INCONCLUSIVE", "topmost-rival", format!("the rival never showed above the overlay; {detail}"));
+    } else {
+        report.check(back.starts_with("after") && in_front, "topmost-rival", detail);
+    }
+}
+
+/// Windows refuses a background app's `SetForegroundWindow` yet still sends a foreground event naming that app's
+/// window. With onlyWhenWoWActive on, the ticker must keep showing, because the game never lost the foreground.
+fn refused_focus_grab(report: &mut Report, session: &Session, this: &Path, work_area: &Rect) {
+    session.ticker.write_settings(&settings(json!({ "onlyWhenWoWActive": true })));
+    let (overlay, game) = (session.overlay(), session.game.hwnd);
+    let corner = Rect { x: work_area.max_x() - 340.0, y: work_area.max_y() - 200.0, width: 300.0, height: 160.0 };
+    let other = match StandIn::spawn(this, &corner, "BTC Ticker end-to-end check: an app grabbing the foreground") {
+        Ok(other) => other,
+        Err(error) => return report.line("INCONCLUSIVE", "refused-focus-grab", error),
+    };
+    let spot = POINT { x: (work_area.x + 40.0) as i32, y: (work_area.max_y() - 40.0) as i32 };
+    let mut tries = Vec::new();
+    let mut refused = false;
+    for _ in 0..5 {
+        // Clicking the game makes it the process that received the last input, so Windows refuses the other app.
+        let ready = session.mouse.click(spot, false, &session.allowed()).is_ok()
+            && (desktop::foreground() == game || desktop::bring_to_front(game))
+            && session.ticker.wait_for(3.0, |snapshot| snapshot.visible).is_some();
+        if !ready {
+            tries.push("the stand-in game could not be put in front with the ticker showing".to_string());
+            continue;
+        }
+        let seen = other.foreground_events().len();
+        let asked = other.try_take_foreground();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let named = other.foreground_events().get(seen..).is_some_and(|events| events.contains(&other.hwnd));
+        let kept = desktop::foreground() == game;
+        tries.push(format!("asked {asked}, a foreground event named it {named}, the game kept the foreground {kept}"));
+        if asked && named && kept {
+            refused = true;
+            break;
+        }
+    }
+    let hidden = refused
+        && wait_until(1.5, || {
+            let shown =
+                session.ticker.snapshot().is_some_and(|snapshot| snapshot.visible) && desktop::is_visible(overlay);
+            (!shown).then_some(())
+        })
+        .is_some();
+    drop(other);
+    let detail = format!("{}; then the ticker hid within 1.5 s {hidden}", tries.join("; "));
+    if refused {
+        report.check(!hidden, "refused-focus-grab", detail);
+    } else {
+        report.line(
+            "INCONCLUSIVE",
+            "refused-focus-grab",
+            format!("Windows never refused the grab with an event; {detail}"),
+        );
     }
 }
 

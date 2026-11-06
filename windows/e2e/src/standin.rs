@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -14,19 +14,27 @@ use windows::Win32::Graphics::Gdi::{
     PAINTSTRUCT, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetClientRect, GetMessageW, GetWindowTextW, IDC_ARROW,
-    LoadCursorW, MSG, PostQuitMessage, RegisterClassW, SW_SHOW, SetForegroundWindow, ShowWindow, TranslateMessage,
-    WINDOW_EX_STYLE, WM_DESTROY, WM_MOUSEWHEEL, WM_PAINT, WNDCLASSW, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, EVENT_SYSTEM_FOREGROUND, GetClientRect, GetMessageW,
+    GetWindowTextW, IDC_ARROW, LoadCursorW, MSG, PostMessageW, PostQuitMessage, RegisterClassW, SW_SHOW,
+    SetForegroundWindow, ShowWindow, TranslateMessage, WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT, WM_APP, WM_DESTROY,
+    WM_MOUSEWHEEL, WM_PAINT, WNDCLASSW, WS_POPUP,
 };
 use windows::core::{PCWSTR, w};
 
 use crate::desktop::{self, Rect};
 
+/// Asks a stand-in to call `SetForegroundWindow` on its own window, as an app grabbing focus would.
+const WM_TAKE_FOREGROUND: u32 = WM_APP + 1;
+
 pub struct StandIn {
     child: Child,
     pub hwnd: HWND,
     wheel: Arc<AtomicU32>,
+    /// The window each `EVENT_SYSTEM_FOREGROUND` the stand-in's own hook received names, oldest first.
+    foreground_events: Arc<Mutex<Vec<i64>>>,
+    attempts: Arc<AtomicU32>,
 }
 
 impl StandIn {
@@ -47,20 +55,27 @@ impl StandIn {
         let stdout = child.stdout.take().ok_or("no stdout")?;
         let (sender, receiver) = mpsc::channel();
         let wheel = Arc::new(AtomicU32::new(0));
-        let turns = Arc::clone(&wheel);
+        let foreground_events = Arc::new(Mutex::new(Vec::new()));
+        let attempts = Arc::new(AtomicU32::new(0));
+        let (turns, events, tries) = (Arc::clone(&wheel), Arc::clone(&foreground_events), Arc::clone(&attempts));
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                if let Some(raw) = line.strip_prefix("HWND ").and_then(|raw| raw.parse::<i64>().ok()) {
+                let number = |prefix: &str| line.strip_prefix(prefix).and_then(|raw| raw.parse::<i64>().ok());
+                if let Some(raw) = number("HWND ") {
                     let _ = sender.send(raw);
+                } else if let Some(raw) = number("FOREGROUND ") {
+                    events.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(raw);
                 } else if line == "WHEEL" {
                     turns.fetch_add(1, Ordering::Relaxed);
+                } else if line == "TOOK FOREGROUND" {
+                    tries.fetch_add(1, Ordering::Relaxed);
                 }
             }
         });
         match receiver.recv_timeout(Duration::from_secs(10)) {
             Ok(raw) => {
                 std::thread::sleep(Duration::from_millis(300));
-                Ok(StandIn { child, hwnd: desktop::hwnd(raw), wheel })
+                Ok(StandIn { child, hwnd: desktop::hwnd(raw), wheel, foreground_events, attempts })
             }
             Err(_) => {
                 let _ = child.kill();
@@ -75,6 +90,22 @@ impl StandIn {
     /// How many `WM_MOUSEWHEEL` messages the stand-in's window has received.
     pub fn wheel_messages(&self) -> u32 {
         self.wheel.load(Ordering::Relaxed)
+    }
+
+    /// Every window a foreground event has named since the stand-in started.
+    pub fn foreground_events(&self) -> Vec<HWND> {
+        let events = self.foreground_events.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        events.iter().map(|raw| desktop::hwnd(*raw)).collect()
+    }
+
+    /// Has the stand-in call `SetForegroundWindow` on itself, and waits up to 2 s for the call to return.
+    pub fn try_take_foreground(&self) -> bool {
+        let before = self.attempts.load(Ordering::Relaxed);
+        // SAFETY: posts a message to the stand-in's window, which may be gone, in which case the post fails.
+        if unsafe { PostMessageW(Some(self.hwnd), WM_TAKE_FOREGROUND, WPARAM(0), LPARAM(0)) }.is_err() {
+            return false;
+        }
+        crate::ticker::wait_until(2.0, || (self.attempts.load(Ordering::Relaxed) > before).then_some(())).is_some()
     }
 }
 
@@ -122,6 +153,18 @@ pub fn run(args: &[String]) {
         ) else {
             return;
         };
+        unsafe extern "system" fn foreground(_: HWINEVENTHOOK, _: u32, hwnd: HWND, _: i32, _: i32, _: u32, _: u32) {
+            println!("FOREGROUND {}", hwnd.0 as isize);
+        }
+        SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            None,
+            Some(foreground),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT,
+        );
         let _ = ShowWindow(hwnd, SW_SHOW);
         let _ = SetForegroundWindow(hwnd);
         println!("HWND {}", hwnd.0 as isize);
@@ -155,6 +198,11 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
             }
             WM_MOUSEWHEEL => {
                 println!("WHEEL");
+                LRESULT(0)
+            }
+            WM_TAKE_FOREGROUND => {
+                let _ = SetForegroundWindow(hwnd);
+                println!("TOOK FOREGROUND");
                 LRESULT(0)
             }
             WM_DESTROY => {
