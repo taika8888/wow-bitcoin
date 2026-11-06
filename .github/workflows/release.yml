@@ -70,6 +70,21 @@ jobs:
             exit 1
           fi
 
+      # bundle.sh copies Support/Info.plist and then signs, so the version goes into the source plist first. Both keys
+      # take one to three integers, so a tag such as v1.2.0-beta fails here instead of shipping an invalid plist.
+      - name: Set the app version from the tag
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          if ! [[ "$version" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]]; then
+            echo "::error::Tag '$TAG' is not v followed by one to three dot-separated integers"
+            exit 1
+          fi
+          plutil -replace CFBundleShortVersionString -string "$version" Support/Info.plist
+          plutil -replace CFBundleVersion -string "$version" Support/Info.plist
+
       # bundle.sh signs the app ad hoc, so the zip needs no second codesign.
       - name: Bundle and zip BTC Ticker.app
         run: |
