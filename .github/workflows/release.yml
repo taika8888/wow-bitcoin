@@ -1,0 +1,85 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  # A pull request that edits this file test-builds both packages.
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Reads the cache that windows.yml's verify job saves on main, and never writes one of its own.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: verify
+          save-if: false
+
+      - name: Build and zip btc-ticker.exe
+        shell: powershell
+        run: |
+          cargo build --release --locked -p btc-ticker
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Compress-Archive -Path target\release\btc-ticker.exe -DestinationPath btc-ticker-windows-x64.zip
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: btc-ticker-windows-x64
+          path: btc-ticker-windows-x64.zip
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      # The app needs Swift 6.1 (README). The image's default Xcode is used as shipped, and this fails if it is older.
+      - name: Swift toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+          version=$(swift --version 2>&1 | sed -nE 's/.*Swift version ([0-9]+\.[0-9]+(\.[0-9]+)?).*/\1/p' | head -n 1)
+          IFS=. read -r major minor _ <<<"$version"
+          if (( ${major:-0} < 6 || (${major:-0} == 6 && ${minor:-0} < 1) )); then
+            echo "::error::Swift '$version' is older than 6.1"
+            exit 1
+          fi
+
+      # bundle.sh signs the app ad hoc, so the zip needs no second codesign.
+      - name: Bundle and zip BTC Ticker.app
+        run: |
+          app="build/BTC Ticker.app"
+          scripts/bundle.sh
+          codesign --verify --strict --verbose=2 "$app"
+          ditto -c -k --keepParent "$app" btc-ticker-macos.zip
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: btc-ticker-macos
+          path: btc-ticker-macos.zip
+          if-no-files-found: error
