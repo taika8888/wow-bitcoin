@@ -1120,41 +1120,49 @@ fn settings_window(report: &mut Report, session: &mut Session, shots: &Path) {
 }
 
 /// Starting the app again on the same settings file, as a second click on a desktop shortcut does, must not add a
-/// second ticker. It opens the running one's Settings instead.
+/// second ticker. It opens the running one's Settings instead, restoring Settings if it was minimized.
 fn second_launch(report: &mut Report, session: &Session, work: &Path) {
     let pid = session.ticker.pid;
-    let second = std::process::Command::new(&session.ticker.exe)
-        .env_remove("BTCTICKER_SETTINGS")
-        .env("BTCTICKER_SETTINGS_FILE", work.join("BTCTicker").join("settings.json"))
-        .env("BTCTICKER_STATE_FILE", work.join("second-state.json"))
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn();
-    let mut second = match second {
-        Ok(second) => second,
-        Err(error) => return report.line("FAIL", "second-launch", format!("could not start a second copy: {error}")),
+    let launch = || -> Result<std::process::ExitStatus, String> {
+        let mut copy = std::process::Command::new(&session.ticker.exe)
+            .env_remove("BTCTICKER_SETTINGS")
+            .env("BTCTICKER_SETTINGS_FILE", work.join("BTCTicker").join("settings.json"))
+            .env("BTCTICKER_STATE_FILE", work.join("second-state.json"))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|error| format!("could not start a second copy: {error}"))?;
+        wait_until(5.0, || copy.try_wait().ok().flatten()).ok_or_else(|| {
+            let _ = copy.kill();
+            let _ = copy.wait();
+            "a second copy was still running after 5 s, so it was killed".to_string()
+        })
     };
-    let exited = wait_until(5.0, || second.try_wait().ok().flatten());
-    if exited.is_none() {
-        let _ = second.kill();
-        let _ = second.wait();
-    }
+    let exited = launch();
     let settings = wait_until(3.0, || desktop::windows_of(pid, SETTINGS_CLASS).first().copied());
     let running = desktop::processes_running(&session.ticker.exe);
+    let restored = settings.map(|window| {
+        desktop::minimize(window);
+        let minimized = wait_until(2.0, || desktop::is_minimized(window).then_some(())).is_some();
+        let again = launch();
+        let shown = wait_until(3.0, || (!desktop::is_minimized(window)).then_some(())).is_some();
+        minimized && again.is_ok_and(|status| status.success()) && shown
+    });
     if let Some(window) = settings {
         desktop::post_close(window);
     }
     let closed = wait_until(3.0, || desktop::windows_of(pid, SETTINGS_CLASS).is_empty().then_some(()));
     report.check(
-        exited.is_some_and(|status| status.success())
+        exited.as_ref().is_ok_and(|status| status.success())
             && running == [pid]
-            && settings.is_some()
+            && restored == Some(true)
             && closed.is_some(),
         "second-launch",
         format!(
-            "a second copy on the same settings file exited within 5 s with {}; still running {running:?} (the first is pid {pid}); the first opened Settings {}; Settings closed again {}",
-            exited.map_or_else(|| "nothing, so it was killed".to_string(), |status| status.to_string()),
+            "a second copy on the same settings file exited with {}; still running {running:?} (the first is pid {pid}); the first opened Settings {}; a third copy restored minimized Settings {}; Settings closed again {}",
+            exited.map_or_else(|error| error, |status| status.to_string()),
             settings.is_some(),
+            restored == Some(true),
             closed.is_some()
         ),
     );

@@ -20,8 +20,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetFocus};
 use windows::Win32::UI::WindowsAndMessaging::{
     BM_GETCHECK, BM_SETCHECK, BN_CLICKED, BS_AUTOCHECKBOX, BS_PUSHBUTTON, CB_ADDSTRING, CB_GETCURSEL, CB_SETCURSEL,
     CBN_SELCHANGE, CBS_DROPDOWNLIST, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, EN_CHANGE,
-    ES_NUMBER, GWLP_USERDATA, GetDlgCtrlID, GetDlgItem, GetWindowLongPtrW, GetWindowTextW, HMENU, IsWindow,
-    NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SW_SHOW, SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    ES_NUMBER, GWLP_USERDATA, GetDlgCtrlID, GetDlgItem, GetWindowLongPtrW, GetWindowTextW, HMENU, IsIconic, IsWindow,
+    NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SW_RESTORE, SW_SHOW, SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
     SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, WINDOW_EX_STYLE,
     WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CTLCOLORSTATIC, WM_HSCROLL, WM_NCDESTROY, WM_SETFONT, WS_BORDER, WS_CAPTION,
     WS_CHILD, WS_EX_CLIENTEDGE, WS_MINIMIZEBOX, WS_OVERLAPPED, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
@@ -243,8 +243,13 @@ impl SettingsWindow {
     }
 
     pub fn focus(&self) {
-        // SAFETY: plain call on this window.
-        let _ = unsafe { SetForegroundWindow(self.hwnd) };
+        // SAFETY: plain calls on this window.
+        unsafe {
+            if IsIconic(self.hwnd).as_bool() {
+                let _ = ShowWindow(self.hwnd, SW_RESTORE);
+            }
+            let _ = SetForegroundWindow(self.hwnd);
+        }
     }
 
     pub fn sync(&self, settings: Settings) {

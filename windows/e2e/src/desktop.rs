@@ -464,6 +464,21 @@ pub fn post_close(window: HWND) {
     };
 }
 
+pub fn minimize(window: HWND) {
+    // SAFETY: plain call; a window that is already gone ignores it.
+    let _ = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::ShowWindow(
+            window,
+            windows::Win32::UI::WindowsAndMessaging::SW_MINIMIZE,
+        )
+    };
+}
+
+pub fn is_minimized(window: HWND) -> bool {
+    // SAFETY: plain query.
+    unsafe { windows::Win32::UI::WindowsAndMessaging::IsIconic(window) }.as_bool()
+}
+
 /// The window's monitor DPI over 96.
 pub fn scale(window: HWND) -> f64 {
     // SAFETY: plain query.
