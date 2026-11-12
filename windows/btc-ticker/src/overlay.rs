@@ -310,15 +310,20 @@ impl Overlay {
 
     pub fn draw(&mut self, app: &App, screens: &Screens) -> Result<()> {
         let scale = win::scale(self.hwnd);
+        let visible = app.overlay().is_visible();
         if self.resize.as_ref().is_some_and(|resize| {
-            resize.original != *app.settings()
-                || resize.scale != scale
-                || !app.overlay().is_visible()
-                || app.expanded().is_none()
+            resize.original != *app.settings() || resize.scale != scale || !visible || app.expanded().is_none()
         }) {
             self.resize = None;
             // SAFETY: an external edit or hiding the window cancels its capture.
             let _ = unsafe { ReleaseCapture() };
+        }
+        // Becoming visible changes the core's overlay state, which renders again, so the first shown frame is fresh.
+        if !visible {
+            self.travel.reset();
+            self.grab = None;
+            self.show(false);
+            return Ok(());
         }
         let settings = self.resize.as_ref().map_or(app.settings(), |resize| &resize.preview);
         let text = self.renderer.ticker_text(&app.display(), settings, scale)?;
@@ -355,11 +360,11 @@ impl Overlay {
         let layout = expanded.map(|(layout, ..)| layout);
         let resize = layout.filter(|_| !settings.locked).map(|layout| crate::render::resize_grip(&layout, scale));
         self.drawn = Drawn { ticker, layout, max_bars, resize };
-        if self.drawn.layout.is_none() || !app.overlay().is_visible() {
+        if self.drawn.layout.is_none() {
             self.travel.reset();
         }
-        self.show(app.overlay().is_visible());
-        match (self.chart_on_screen().filter(|_| app.overlay().is_visible()), &self.grab) {
+        self.show(true);
+        match (self.chart_on_screen(), &self.grab) {
             (Some(chart), Some(grab)) => grab.retarget(chart),
             (None, Some(_)) => self.grab = None,
             _ => {}
