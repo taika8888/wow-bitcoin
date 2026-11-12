@@ -474,9 +474,71 @@ pub fn minimize(window: HWND) {
     };
 }
 
+/// Posts the key press without real input, so it reaches only `window`, through its message loop as a typed key does.
+pub fn post_escape(window: HWND) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
+    // SAFETY: plain post; a window that is already gone ignores it.
+    let _ = unsafe {
+        windows::Win32::UI::WindowsAndMessaging::PostMessageW(
+            Some(window),
+            windows::Win32::UI::WindowsAndMessaging::WM_KEYDOWN,
+            WPARAM(usize::from(VK_ESCAPE.0)),
+            LPARAM(1),
+        )
+    };
+}
+
 pub fn is_minimized(window: HWND) -> bool {
     // SAFETY: plain query.
     unsafe { windows::Win32::UI::WindowsAndMessaging::IsIconic(window) }.as_bool()
+}
+
+/// Clicks a button with a message to it, not with mouse input.
+pub fn send_click(button: HWND) {
+    // SAFETY: plain message; the button's process handles it before this returns.
+    unsafe {
+        windows::Win32::UI::WindowsAndMessaging::SendMessageW(
+            button,
+            windows::Win32::UI::WindowsAndMessaging::BM_CLICK,
+            None,
+            None,
+        );
+    }
+}
+
+/// A string value under HKEY_CURRENT_USER, or None when it does not exist.
+pub fn registry_string(key: &str, value: &str) -> Option<String> {
+    use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
+    let (key, value) = (crate::wide(key), crate::wide(value));
+    let mut data = [0u16; 1024];
+    let mut size = size_of_val(&data) as u32;
+    // SAFETY: the strings and the buffer outlive the call, and `size` is the buffer's size in bytes.
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            windows::core::PCWSTR(key.as_ptr()),
+            windows::core::PCWSTR(value.as_ptr()),
+            RRF_RT_REG_SZ,
+            None,
+            Some(data.as_mut_ptr().cast()),
+            Some(&mut size),
+        )
+    };
+    let length = (size as usize / 2).saturating_sub(1);
+    status.is_ok().then(|| String::from_utf16_lossy(&data[..length]))
+}
+
+pub fn delete_registry_value(key: &str, value: &str) {
+    use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RegDeleteKeyValueW};
+    let (key, value) = (crate::wide(key), crate::wide(value));
+    // SAFETY: the strings outlive the call; a missing value is not an error worth reporting here.
+    let _ = unsafe {
+        RegDeleteKeyValueW(
+            HKEY_CURRENT_USER,
+            windows::core::PCWSTR(key.as_ptr()),
+            windows::core::PCWSTR(value.as_ptr()),
+        )
+    };
 }
 
 /// The window's monitor DPI over 96.
