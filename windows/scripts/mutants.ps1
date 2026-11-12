@@ -55,9 +55,12 @@ $mutants = @(
                 Replace = 'if self.overlay.settings() != overlay_before.settings() {' }) }
     @{ Name = 'saves-unchanged-settings'; File = 'src\app.rs'; Expect = 'SaveSettings is emitted iff an in-app input changed the settings, and carries the new settings'
         Edits = @(@{ Find = 'if edited_in_app && self.overlay.settings() != overlay_before.settings() {'; Replace = 'if edited_in_app {' }) }
-    @{ Name = 'no-render-for-chart-loads'; File = 'src\app.rs'; Expect = 'Render is emitted iff the overlay, the feed status or a chart load changed'
-        Edits = @(@{ Find = 'if charts_changed || self.overlay != overlay_before || self.status() != status_before {'
-                Replace = 'if self.overlay != overlay_before || self.status() != status_before {' }) }
+    @{ Name = 'no-render-for-chart-loads'; File = 'src\app.rs'; Expect = 'Render is emitted iff the overlay, the feed status, the shown text or a chart load changed'
+        Edits = @(@{ Find = 'if charts_changed || self.overlay != overlay_before || self.shown() != shown_before {'
+                Replace = 'if self.overlay != overlay_before || self.shown() != shown_before {' }) }
+    @{ Name = 'stale-age-not-redrawn'; File = 'src\app.rs'; Expect = 'Render is emitted iff the overlay, the feed status, the shown text or a chart load changed'
+        Edits = @(@{ Find = '(self.status(), self.display(), self.tooltip())'
+                Replace = '(self.status(), TickerDisplay::new(&self.status(), self.settings(), self.started_at), String::new())' }) }
     @{ Name = 'click-moves-ticker'; File = 'src\overlay.rs'; Expect = 'a click never moves the ticker'
         Edits = @(@{ Find = '(DragPhase::Pressed, PressTarget::Body) => next.expanded = !self.expanded,'
                 Replace = '(DragPhase::Pressed, PressTarget::Body) => { next.expanded = !self.expanded; next.settings.position = Some(ticker_origin) }' }) }

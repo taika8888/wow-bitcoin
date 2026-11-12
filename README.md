@@ -56,6 +56,7 @@ Set WoW's display mode to **Windowed** or **Windowed (Fullscreen)**. In exclusiv
 - Scroll, turn the mouse wheel or pinch over the open chart to zoom. The game keeps the keyboard and the focus, and it doesn't get the wheel while the pointer is over the chart. On Windows, this holds even with the "Scroll inactive windows when I hover over them" setting turned off.
 - While the position is unlocked, drag the ticker to move it. On Windows, you can also drag the open chart, and drag its corner grip, opposite the ticker, to resize it. The new size is saved when you release the mouse.
 - **Lock Position** stops dragging and resizing. Clicks still open the chart.
+- When the price stops updating, the ticker dims it and marks it stale. On Windows, the mark also says how old the price is, for example `stale 3m`. Hover over the tray icon to see the price, whether it is live, and why it is not updating, for example `Kraken is not answering`. The tooltip works while the ticker is hidden too.
 
 The **Settings** window has these options:
 

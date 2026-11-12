@@ -4,7 +4,7 @@ use std::time::Duration;
 use crate::chart::{CandleChart, CandleLoad, ChartFeed};
 use crate::display::TickerDisplay;
 use crate::feed::{FeedSchedule, FeedStatus};
-use crate::kraken::{self, HttpOutcome};
+use crate::kraken::{self, FetchFailure, HttpOutcome};
 use crate::market::{Quote, Timeframe};
 use crate::overlay::{Frontmost, OverlayEvent, OverlayMode, OverlayState};
 use crate::settings::Settings;
@@ -53,7 +53,8 @@ pub enum Effect {
     FetchQuote { request: RequestId, url: &'static str, timeout: Duration },
     /// GET `url` with `timeout` off the UI thread, then send `Input::CandlesFinished` with this request id.
     FetchCandles { request: RequestId, timeframe: Timeframe, url: String, timeout: Duration },
-    /// The overlay, the feed status or a chart load changed: draw again from the read accessors.
+    /// The overlay, the feed status, the ticker text, the tooltip or a chart load changed: draw again from the read
+    /// accessors.
     Render,
 }
 
@@ -65,6 +66,8 @@ pub struct App {
     started_at: Timestamp,
     now: Timestamp,
     last_good: Option<Quote>,
+    /// Why the last finished quote request failed, cleared by the next success.
+    quote_failure: Option<FetchFailure>,
     schedule: FeedSchedule,
     quote_in_flight: Option<RequestId>,
     charts: ChartFeed,
@@ -79,6 +82,7 @@ impl App {
             started_at: now,
             now,
             last_good: None,
+            quote_failure: None,
             schedule: FeedSchedule::new(),
             quote_in_flight: None,
             charts: ChartFeed::default(),
@@ -88,7 +92,7 @@ impl App {
 
     pub fn handle(&mut self, input: Input) -> Vec<Effect> {
         let overlay_before = self.overlay;
-        let status_before = self.status();
+        let shown_before = self.shown();
         let edited_in_app = matches!(input, Input::Overlay(_));
         let mut charts_changed = false;
         match input {
@@ -109,8 +113,12 @@ impl App {
                 self.advance(now);
                 let quote = kraken::quote_from(&outcome, self.now);
                 self.schedule.finished(quote.is_ok());
-                if let Ok(quote) = quote {
-                    self.last_good = Some(quote);
+                match quote {
+                    Ok(quote) => {
+                        self.last_good = Some(quote);
+                        self.quote_failure = None;
+                    }
+                    Err(failure) => self.quote_failure = Some(failure),
                 }
             }
             Input::CandlesFinished { request, timeframe, outcome, now } => {
@@ -143,7 +151,7 @@ impl App {
             let (url, timeout) = (kraken::ohlc_url(timeframe), kraken::CANDLES_TIMEOUT);
             effects.push(Effect::FetchCandles { request, timeframe, url, timeout });
         }
-        if charts_changed || self.overlay != overlay_before || self.status() != status_before {
+        if charts_changed || self.overlay != overlay_before || self.shown() != shown_before {
             effects.push(Effect::Render);
         }
         effects
@@ -168,7 +176,15 @@ impl App {
     }
 
     pub fn display(&self) -> TickerDisplay {
-        TickerDisplay::new(&self.status(), self.settings())
+        TickerDisplay::new(&self.status(), self.settings(), self.now)
+    }
+
+    pub fn quote_failure(&self) -> Option<&FetchFailure> {
+        self.quote_failure.as_ref()
+    }
+
+    pub fn tooltip(&self) -> String {
+        TickerDisplay::tooltip(&self.status(), self.quote_failure(), self.settings(), self.now)
     }
 
     pub fn chart_load(&self, timeframe: Timeframe) -> &CandleLoad {
@@ -206,6 +222,11 @@ impl App {
             .into_iter()
             .flatten()
             .reduce(|soonest, time| if time < soonest { time } else { soonest })
+    }
+
+    /// A stale price's age is in the text, so the shell's 1 s heartbeat tick is what moves it on, not `next_wake`.
+    fn shown(&self) -> (FeedStatus, TickerDisplay, String) {
+        (self.status(), self.display(), self.tooltip())
     }
 
     fn advance(&mut self, now: Timestamp) {
