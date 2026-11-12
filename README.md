@@ -2,19 +2,54 @@
 
 # BTC Ticker
 
-BTC Ticker shows the live Bitcoin price in a small window that floats above World of Warcraft. The ticker never takes focus from the game, so WoW keeps the keyboard. Click the ticker to open a candlestick chart with 1m, 15m and 4h timeframes, and click it again to close the chart. Scroll or pinch over the chart to zoom from a quarter of the usual span out to the last 720 candles. The Windows app runs on Windows 11, and the macOS app runs on macOS 14 or later. Prices come from Kraken's public API.
+A small live Bitcoin price that floats above World of Warcraft. The ticker never takes focus from the game, so WoW keeps the keyboard. Click the ticker to open a candlestick chart, and click it again to close the chart.
 
-## Download
+<p>
+  <img src="assets/screenshots/ticker.png" width="184" alt="The ticker reading BTC $79,300, down 1.42%">
+  &nbsp;
+  <img src="assets/screenshots/chart.png" width="400" alt="The open chart with 15-minute candles">
+</p>
 
-Download the app from the [latest release](../../releases/latest). Each release has three files:
+It runs on Windows 11, and on macOS 14 or later on Apple silicon and Intel Macs. Windows 10 should work too, but it hasn't been tested. Prices come from Kraken's public API. There's no account, no API key and no tracking.
 
-| File | What it holds |
-| --- | --- |
-| `btc-ticker-windows-x64.zip` | `btc-ticker.exe`, the Windows app |
-| `btc-ticker-macos.zip` | `BTC Ticker.app`, the macOS app |
-| `SHA256SUMS.txt` | The SHA-256 checksum of each zip |
+## Install
 
-To check a download, compare its checksum with the line for that zip in `SHA256SUMS.txt`:
+| | Download | Then |
+| --- | --- | --- |
+| **Windows** | [btc-ticker-windows-x64.zip](../../releases/latest/download/btc-ticker-windows-x64.zip) | [Install on Windows](#install-on-windows) |
+| **macOS** | [btc-ticker-macos.zip](../../releases/latest/download/btc-ticker-macos.zip) | [Install on macOS](#install-on-macos) |
+
+The apps aren't signed, so Windows and macOS each show a warning the first time you open one. The steps below show how to get past it. Every release is built from this repo's source by [GitHub Actions](.github/workflows/release.yml).
+
+### Install on Windows
+
+1. Download [btc-ticker-windows-x64.zip](../../releases/latest/download/btc-ticker-windows-x64.zip).
+2. Right-click the zip, choose **Extract All…**, and click **Extract**. Move `btc-ticker.exe` to any folder you like, such as `Documents`.
+3. Double-click `btc-ticker.exe`.
+4. If Windows says **Windows protected your PC**, click **More info**, then **Run anyway**. Windows asks only the first time.
+
+The ticker appears at the top center of your main screen. Drag it wherever you want. To change settings or quit, right-click the ticker, or right-click the orange **B** in the notification area by the clock. Windows 11 hides new tray icons behind the **^** arrow until you pin them. To start the ticker with Windows, tick **Start with Windows** in **Settings…**.
+
+### Install on macOS
+
+1. Download [btc-ticker-macos.zip](../../releases/latest/download/btc-ticker-macos.zip). Safari unzips it for you. In other browsers, double-click the zip.
+2. Drag **BTC Ticker** into your **Applications** folder.
+3. Double-click **BTC Ticker**. macOS refuses to open it the first time, because the app isn't notarized by Apple. Click **Done**, or **Cancel** on macOS 14.
+4. Allow the app once:
+   - **macOS 15 or later:** open **System Settings** > **Privacy & Security**, scroll down to **"BTC Ticker" was blocked**, click **Open Anyway**, and confirm with your password.
+   - **macOS 14:** right-click **BTC Ticker** in Applications, choose **Open**, then click **Open** in the dialog.
+
+If you'd rather use Terminal, this one command replaces step 4:
+
+```sh
+xattr -dr com.apple.quarantine "/Applications/BTC Ticker.app"
+```
+
+The app has no Dock icon. The ticker appears at the top center of the screen. To change settings or quit, click the bitcoin icon in the menu bar, or right-click the ticker.
+
+### Check a download (optional)
+
+Each release also has `SHA256SUMS.txt`, which holds the SHA-256 checksum of each zip. To check a download, compare its checksum with the line for that zip:
 
 ```powershell
 Get-FileHash .\btc-ticker-windows-x64.zip -Algorithm SHA256
@@ -24,27 +59,9 @@ Get-FileHash .\btc-ticker-windows-x64.zip -Algorithm SHA256
 shasum -a 256 btc-ticker-macos.zip
 ```
 
-## Install on Windows
+### Update
 
-1. Unzip `btc-ticker-windows-x64.zip` and put `btc-ticker.exe` in any folder you like.
-2. Run `btc-ticker.exe`.
-3. The build is not code-signed, so Windows SmartScreen may say "Windows protected your PC". Click **More info**, then **Run anyway**.
-
-The ticker starts at the top center of the primary monitor. Right-click the ticker, or the orange "B" in the notification area, for **Settings…**, **Lock Position** and **Quit BTC Ticker**. Windows 11 puts a new tray icon in the overflow, behind the `^` arrow, until you pin it.
-
-## Install on macOS
-
-1. Unzip `btc-ticker-macos.zip` and move `BTC Ticker.app` to your Applications folder.
-2. Open `BTC Ticker.app`.
-3. The build is not signed with an Apple Developer ID or notarized, so macOS blocks the first launch. On macOS 14, right-click the app, choose **Open**, then click **Open** again. On macOS 15 and later, open the app once, then go to **System Settings** > **Privacy & Security** and click **Open Anyway**.
-
-Instead of step 3, you can remove the quarantine flag in Terminal:
-
-```sh
-xattr -dr com.apple.quarantine "/Applications/BTC Ticker.app"
-```
-
-The app has no Dock icon. Use the bitcoin icon in the menu bar, or right-click the ticker, for **Settings…**, **Lock Position** and **Quit BTC Ticker**.
+Download the new zip and replace the old `btc-ticker.exe` or `BTC Ticker.app` with the new one. Quit the old app first. Your settings stay as they are.
 
 ## Run WoW in a windowed mode
 
@@ -120,6 +137,8 @@ Swift 6.1 from the Xcode Command Line Tools is enough. The app runs on macOS 14 
 ./scripts/bundle.sh              # builds "build/BTC Ticker.app"
 open "build/BTC Ticker.app"
 ```
+
+That builds for your Mac's own processor. To build one app for both Apple silicon and Intel, as the releases are, run `UNIVERSAL=1 ./scripts/bundle.sh`. That needs the full Xcode, not only the Command Line Tools.
 
 ### Windows
 

@@ -3,8 +3,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-swift build -c release -Xswiftc -warnings-as-errors
-bin="$(swift build -c release --show-bin-path)"
+# UNIVERSAL=1 builds one binary for Apple silicon and Intel, which needs Xcode, not only the Command Line Tools.
+arch=()
+if [[ "${UNIVERSAL:-0}" == 1 ]]; then
+	arch=(--arch arm64 --arch x86_64)
+fi
+# The ${arch[@]+...} form keeps an empty array from tripping set -u in macOS's bash 3.2.
+swift build -c release ${arch[@]+"${arch[@]}"} -Xswiftc -warnings-as-errors
+bin="$(swift build -c release ${arch[@]+"${arch[@]}"} --show-bin-path)"
 app="build/BTC Ticker.app"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT

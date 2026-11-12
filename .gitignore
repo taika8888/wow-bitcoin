@@ -3,4 +3,4 @@ build/
 .swiftpm/
 .DS_Store
 decisions.tsv
-/target/
+target/
