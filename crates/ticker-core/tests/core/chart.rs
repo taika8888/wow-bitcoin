@@ -1,5 +1,5 @@
 use ticker_core::kraken::parse_candles;
-use ticker_core::{Candle, CandleChart, Timeframe, Timestamp, Tone, Zoom, ZoomStep};
+use ticker_core::{Candle, CandleChart, CandleSeries, Quote, Timeframe, Timestamp, Tone, Zoom, ZoomStep};
 
 use crate::fixtures;
 
@@ -131,6 +131,53 @@ fn a_bar_merges_its_run_from_first_open_to_last_close() {
     );
     let bar = uneven.bars[0];
     assert_eq!((bar.low, bar.high, bar.body_low, bar.body_high), (7.0, 16.0, 13.0, 15.0));
+}
+
+fn fetched_inside_the_newest_candle() -> CandleSeries {
+    let candles = vec![
+        wicked(10.0, 12.0, 13.0, 9.0, 0),
+        wicked(12.0, 11.0, 14.0, 10.0, 1),
+        wicked(11.0, 15.0, 15.0, 11.0, 2),
+        wicked(15.0, 14.0, 16.0, 13.0, 3),
+        wicked(14.0, 9.0, 15.0, 8.0, 4),
+        wicked(9.0, 10.0, 11.0, 7.0, 5),
+    ];
+    CandleSeries { candles, fetched_at: T0.plus(5.0 * 60.0 + 10.0) }
+}
+
+fn quote(price: f64, fetched_at: Timestamp) -> Quote {
+    Quote { price, open_24h: price, fetched_at }
+}
+
+#[test]
+fn a_later_quote_inside_the_newest_candle_closes_its_merged_bar_and_widens_the_wicks() {
+    let series = fetched_inside_the_newest_candle();
+    let kraken = CandleChart::new(&series.candles, Timeframe::M1, Zoom::Standard, 2).unwrap();
+    for (price, expected) in [(20.0, (7.0, 20.0, 15.0, 20.0, Tone::Up)), (5.0, (5.0, 16.0, 5.0, 15.0, Tone::Down))] {
+        let traded = quote(price, T0.plus(5.0 * 60.0 + 30.0));
+        let chart = series.chart(Some(&traded), Timeframe::M1, Zoom::Standard, 2).unwrap();
+        let bar = chart.bars[1];
+        assert_eq!((bar.low, bar.high, bar.body_low, bar.body_high, bar.tone), expected, "{price}");
+        assert_eq!((chart.bars[0], chart.last_price), (kraken.bars[0], price), "{price}");
+        assert!(chart.price_domain.contains(&price), "{price}: the axis fits the trade");
+        assert_eq!((chart.time_domain, chart.candle_count), (kraken.time_domain.clone(), kraken.candle_count));
+    }
+}
+
+#[test]
+fn a_quote_from_before_the_fetch_or_past_the_newest_candle_leaves_the_chart_as_kraken_sent_it() {
+    let series = fetched_inside_the_newest_candle();
+    let kraken = CandleChart::new(&series.candles, Timeframe::M1, Zoom::Standard, 2);
+    let drawn = |quote: Option<&Quote>| series.chart(quote, Timeframe::M1, Zoom::Standard, 2);
+    assert_eq!(drawn(None), kraken);
+    for (fetched_at, why) in [
+        (series.fetched_at.plus(-5.0), "older than the candles"),
+        (series.fetched_at, "as old as the candles"),
+        (T0.plus(6.0 * 60.0), "in the next candle, which Kraken has not sent"),
+        (T0.plus(90.0 * 60.0), "long past the newest candle"),
+    ] {
+        assert_eq!(drawn(Some(&quote(99.0, fetched_at))), kraken, "{why}");
+    }
 }
 
 #[test]
