@@ -3,15 +3,16 @@
 use std::ffi::c_void;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ticker_core::{HttpOutcome, RequestId, Timeframe};
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Networking::WinHttp::{
-    INTERNET_DEFAULT_HTTPS_PORT, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE, WINHTTP_QUERY_FLAG_NUMBER,
+    INTERNET_DEFAULT_HTTPS_PORT, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_DECOMPRESSION_FLAG_DEFLATE,
+    WINHTTP_DECOMPRESSION_FLAG_GZIP, WINHTTP_FLAG_SECURE, WINHTTP_OPTION_DECOMPRESSION, WINHTTP_QUERY_FLAG_NUMBER,
     WINHTTP_QUERY_STATUS_CODE, WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest,
     WinHttpQueryDataAvailable, WinHttpQueryHeaders, WinHttpReadData, WinHttpReceiveResponse, WinHttpSendRequest,
-    WinHttpSetTimeouts,
+    WinHttpSetOption, WinHttpSetTimeouts,
 };
 use windows::Win32::UI::WindowsAndMessaging::PostMessageW;
 use windows::core::{PCWSTR, w};
@@ -45,15 +46,24 @@ impl Net {
             WinHttpOpen(w!("BTCTicker/1.0"), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, PCWSTR::null(), PCWSTR::null(), 0)
         };
         let session = Handle::new(session).ok_or_else(windows::core::Error::from_thread)?;
+        let decompression = WINHTTP_DECOMPRESSION_FLAG_GZIP | WINHTTP_DECOMPRESSION_FLAG_DEFLATE;
+        // SAFETY: the option is a DWORD in a buffer that outlives the call.
+        unsafe { WinHttpSetOption(Some(session.0), WINHTTP_OPTION_DECOMPRESSION, Some(&decompression.to_ne_bytes())) }?;
         let (sender, receiver) = channel();
         Ok(Net { session: Arc::new(session), sender, receiver, notify: notify.0 as isize, message })
     }
 
+    /// The outcome arrives within `timeout`. WinHTTP applies its timeouts to each phase and each read, and must
+    /// not have a synchronous request closed from another thread, so a request past the deadline is reported
+    /// unreachable and left to end on its own thread.
     pub fn fetch(&self, request: Request, url: &str, timeout: Duration) {
         let (session, sender, url) = (Arc::clone(&self.session), self.sender.clone(), url.to_string());
         let (notify, message) = (self.notify, self.message);
+        let deadline = Instant::now() + timeout;
         std::thread::spawn(move || {
-            let outcome = get(&session, &url, timeout).unwrap_or(HttpOutcome::Unreachable);
+            let (done, answer) = channel();
+            std::thread::spawn(move || done.send(get(&session, &url, timeout, deadline)));
+            let outcome = answer.recv_timeout(timeout).ok().flatten().unwrap_or(HttpOutcome::Unreachable);
             if sender.send(Fetched { request, outcome }).is_ok() {
                 // SAFETY: posting to a window that may already be gone fails harmlessly.
                 let _ = unsafe { PostMessageW(Some(HWND(notify as *mut c_void)), message, WPARAM(0), LPARAM(0)) };
@@ -67,7 +77,7 @@ impl Net {
 }
 
 /// None for anything short of a full answer: no route, a timeout, TLS failure, or a cut-off body.
-fn get(session: &Handle, url: &str, timeout: Duration) -> Option<HttpOutcome> {
+fn get(session: &Handle, url: &str, timeout: Duration, deadline: Instant) -> Option<HttpOutcome> {
     let (host, path) = url.strip_prefix("https://")?.split_once('/')?;
     let (host, path) = (wide(host), wide(&format!("/{path}")));
     let millis = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
@@ -98,7 +108,11 @@ fn get(session: &Handle, url: &str, timeout: Duration) -> Option<HttpOutcome> {
         )
         .ok()?;
         let mut body = Vec::new();
+        // Each read restarts the receive timeout, so a trickling body would otherwise keep this thread forever.
         loop {
+            if Instant::now() >= deadline {
+                return None;
+            }
             let mut available = 0u32;
             WinHttpQueryDataAvailable(request.0, &mut available).ok()?;
             if available == 0 {

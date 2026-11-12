@@ -1,6 +1,7 @@
 //! Small safe wrappers over the Win32 calls more than one module needs.
 
 use std::path::Path;
+use std::sync::{Mutex, PoisonError};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ticker_core::{Rect, ScreenArea, Screens, Timestamp};
@@ -8,6 +9,7 @@ use windows::Win32::Foundation::{CloseHandle, FILETIME, HWND, LPARAM, POINT, REC
 use windows::Win32::Globalization::{GetLocaleInfoEx, LOCALE_ITIME};
 use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::SystemInformation::GetTickCount64;
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
@@ -24,8 +26,18 @@ pub fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().chain(Some(0)).collect()
 }
 
+/// The later of the wall clock and the last answer plus the ticks since. The core never lets time run backwards,
+/// so a wall clock set back would freeze fetching and the stale check; the tick count is immune to that and keeps
+/// counting through sleep, unlike `QueryUnbiasedInterruptTime`. Following the wall clock forward keeps quote times
+/// comparable with Kraken's candle times after Windows corrects a slow clock.
 pub fn now() -> Timestamp {
-    let seconds = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |since| since.as_secs_f64());
+    static LAST: Mutex<Option<(f64, u64)>> = Mutex::new(None);
+    // SAFETY: plain query.
+    let ticks = unsafe { GetTickCount64() };
+    let wall = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0.0, |since| since.as_secs_f64());
+    let mut last = LAST.lock().unwrap_or_else(PoisonError::into_inner);
+    let seconds = last.map_or(wall, |(seconds, at)| wall.max(seconds + (ticks - at) as f64 / 1000.0));
+    *last = Some((seconds, ticks));
     Timestamp::from_unix_seconds(seconds)
 }
 
