@@ -5,7 +5,7 @@
 A small live Bitcoin price that floats above World of Warcraft. The ticker never takes focus from the game, so WoW keeps the keyboard. Click the ticker to open a candlestick chart, and click it again to close the chart.
 
 <p>
-  <img src="assets/screenshots/ticker.png" width="184" alt="The ticker reading BTC $79,300, down 1.42%">
+  <img src="assets/screenshots/ticker.png" width="184" alt="The ticker showing the BTC price and its change since the daily open">
   &nbsp;
   <img src="assets/screenshots/chart.png" width="400" alt="The open chart with 15-minute candles">
 </p>
