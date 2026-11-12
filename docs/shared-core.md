@@ -178,9 +178,10 @@ This list merges both inventories and drops duplicates. They read the sources at
 18. The plot rect differs. The Mac reserves a fixed 60 points for price labels. Windows measures the widest label and adds a 6-pixel gap, so its bar budget and drawn plot width disagree slightly. Open until PR 4.
 19. The placeholder is 10 pt on the Mac and 12 DIP on Windows. The stale badge sits at the chart's corner on the Mac and the plot's corner on Windows. Open until PR 7 at the latest.
 20. Windows gives wicks and bodies a 1-pixel minimum height and rounds the wick's x. The Mac does neither. Open until PR 7 at the latest.
+21. Windows moves the newest candle's close, high and low, and the dashed last-price line, to each quote taken after the candle fetch and inside that candle's interval (`CandleSeries::chart`). The Mac draws the candles as Kraken sent them, so its line can trail the ticker until the next fetch, up to 5 minutes on 4h. Open until PR 7.
 
 ### In the shells
 
-21. Zoom travel differs. The Mac steps once per wheel event, once per 50 points of trackpad travel and once per 0.25 of pinch. It ignores momentum, restarts at a gesture's start and keeps travel across a reversal. Windows steps once per 120 wheel units and resets on a reversal and when the cursor leaves the chart. Open until PR 7.
-22. Both drag thresholds are 3, but in points on the Mac and physical pixels on Windows. At 200% scaling, Windows starts a drag after half the Mac's travel. Open.
-23. The e2e snapshot schemas differ. Rust has `hwnd` and `maxBars`, and Swift has `windowNumber` and `shortcuts`. The Mac keeps a small Swift `Snapshot` so `scripts/e2e.swift` does not change. Open by design.
+22. Zoom travel differs. The Mac steps once per wheel event, once per 50 points of trackpad travel and once per 0.25 of pinch. It ignores momentum, restarts at a gesture's start and keeps travel across a reversal. Windows steps once per 120 wheel units and resets on a reversal and when the cursor leaves the chart. Open until PR 7.
+23. Both drag thresholds are 3, but in points on the Mac and physical pixels on Windows. At 200% scaling, Windows starts a drag after half the Mac's travel. Open.
+24. The e2e snapshot schemas differ. Rust has `hwnd` and `maxBars`, and Swift has `windowNumber` and `shortcuts`. The Mac keeps a small Swift `Snapshot` so `scripts/e2e.swift` does not change. Open by design.

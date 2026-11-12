@@ -3,7 +3,7 @@ use std::ops::RangeInclusive;
 use crate::app::RequestId;
 use crate::display::Tone;
 use crate::kraken::FetchFailure;
-use crate::market::{Candle, Timeframe, Zoom};
+use crate::market::{Candle, Quote, Timeframe, Zoom};
 use crate::overlay::{OverlayMode, OverlayState};
 use crate::time::Timestamp;
 
@@ -11,6 +11,26 @@ use crate::time::Timestamp;
 pub struct CandleSeries {
     pub candles: Vec<Candle>,
     pub fetched_at: Timestamp,
+}
+
+impl CandleSeries {
+    /// What the chart draws. A quote taken after this fetch and inside the newest candle's interval is a trade Kraken
+    /// had not reported yet, so it moves that candle's close and widens its wicks. Any later quote waits for the next
+    /// fetch to bring the candle it belongs to.
+    pub fn chart(
+        &self,
+        quote: Option<&Quote>,
+        timeframe: Timeframe,
+        zoom: Zoom,
+        max_bars: usize,
+    ) -> Option<CandleChart> {
+        let newest = self.candles.last()?;
+        let forming = newest.time..newest.time.plus(timeframe.interval_seconds());
+        let trade = quote
+            .filter(|quote| quote.fetched_at > self.fetched_at && forming.contains(&quote.fetched_at))
+            .map(|quote| quote.price);
+        CandleChart::build(&self.candles, trade, timeframe, zoom, max_bars)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -165,13 +185,23 @@ impl CandleChart {
     /// least 1), each bar merges a run of adjacent candles counted from the newest, and a partial run at the oldest end
     /// is left out.
     pub fn new(all: &[Candle], timeframe: Timeframe, zoom: Zoom, max_bars: usize) -> Option<CandleChart> {
+        Self::build(all, None, timeframe, zoom, max_bars)
+    }
+
+    fn build(
+        all: &[Candle],
+        trade: Option<f64>,
+        timeframe: Timeframe,
+        zoom: Zoom,
+        max_bars: usize,
+    ) -> Option<CandleChart> {
         let visible = zoom.visible_count(timeframe, all.len());
         let per_bar = visible.div_ceil(max_bars.max(1));
         if per_bar == 0 {
             return None;
         }
         let candles = &all[all.len() - (visible - visible % per_bar)..];
-        let merged: Vec<Candle> = candles
+        let mut merged: Vec<Candle> = candles
             .chunks_exact(per_bar)
             .map(|run| Candle {
                 time: run[0].time,
@@ -181,6 +211,9 @@ impl CandleChart {
                 close: run[run.len() - 1].close,
             })
             .collect();
+        if let (Some(price), Some(newest)) = (trade, merged.last_mut()) {
+            *newest = Candle { high: newest.high.max(price), low: newest.low.min(price), close: price, ..*newest };
+        }
         let (first, last) = (merged.first()?, merged.last()?);
         let low = merged.iter().map(|candle| candle.low).fold(f64::INFINITY, f64::min);
         let high = merged.iter().map(|candle| candle.high).fold(f64::NEG_INFINITY, f64::max);

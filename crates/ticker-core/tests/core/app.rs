@@ -7,7 +7,7 @@ use ticker_core::kraken::{self, CANDLES_TIMEOUT, TICKER_URL};
 use ticker_core::{
     App, CandleLoad, ChartNotice, Effect, FeedStatus, FetchFailure, Frontmost, HttpOutcome, Input, KrakenError,
     OverlayEvent, OverlayMode, PressTarget, Quote, Rect, RequestId, ScreenPoint, Settings, Snapshot, SnapshotWindow,
-    Timeframe, Timestamp, Zoom, ZoomStep,
+    Timeframe, Timestamp, Tone, Zoom, ZoomStep,
 };
 
 use crate::chart::{DEFAULT_BUDGET, T0};
@@ -456,6 +456,42 @@ fn the_expanded_chart_reads_back_the_recorded_candles() {
     shell.click(PressTarget::Body);
     assert_eq!(shell.app.overlay().mode(), OverlayMode::Collapsed);
     assert_eq!((shell.app.expanded(), shell.app.chart(DEFAULT_BUDGET)), (None, None));
+}
+
+#[test]
+fn the_newest_candle_and_the_last_price_follow_each_quote_taken_inside_it() {
+    let mut shell = expanded_on(Timeframe::M1);
+    let forming = format!(
+        r#"{{"error":[],"result":{{"XXBTZUSD":[[{},"80000","80010","79990","80005","80000","1.0",3]],"last":1}}}}"#,
+        T0.unix_seconds()
+    );
+    shell.finish_candles(answered(&forming), 1.0);
+    let newest = |shell: &Shell| {
+        let chart = shell.app.chart(DEFAULT_BUDGET).unwrap();
+        let bar = chart.bars[chart.bars.len() - 1];
+        (chart.last_price, bar.low, bar.high, bar.tone)
+    };
+    assert_eq!(newest(&shell), (80005.0, 79990.0, 80010.0, Tone::Up));
+    for (seconds, price, low, high, tone) in
+        [(5.0, 80100.0, 79990.0, 80100.0, Tone::Up), (10.0, 79900.0, 79900.0, 80010.0, Tone::Down)]
+    {
+        shell.tick(seconds);
+        let effects = shell.finish_quote(price_body(price), seconds);
+        assert!(renders(&effects), "{effects:?}");
+        assert_eq!(shell.app.status().quote().map(|quote| quote.price), Some(price));
+        assert_eq!(newest(&shell), (price, low, high, tone), "the chart agrees with the ticker {seconds} s in");
+    }
+
+    for seconds in [15.0, 20.0] {
+        shell.tick(seconds);
+        shell.finish_quote(HttpOutcome::Unreachable, seconds);
+    }
+    shell.tick(26.0);
+    assert_eq!(
+        shell.app.status(),
+        FeedStatus::Stale(Quote { price: 79900.0, open_24h: 80000.0, fetched_at: at(10.0) })
+    );
+    assert_eq!(newest(&shell).0, 79900.0, "a stale quote is still newer than the candles");
 }
 
 #[test]
