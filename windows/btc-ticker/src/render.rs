@@ -201,9 +201,26 @@ impl Renderer {
 
     /// The tray icon: an orange disc with a white "B", `size` pixels square.
     pub fn icon(&self, size: i32) -> Result<HICON> {
+        let bitmap = self.icon_bitmap(size)?;
+        // SAFETY: CreateIconIndirect copies the DIB's bits.
+        unsafe {
+            let mask = CreateBitmap(size, size, 1, 1, None);
+            let icon = CreateIconIndirect(&ICONINFO {
+                fIcon: true.into(),
+                hbmMask: mask,
+                hbmColor: bitmap.bitmap,
+                ..Default::default()
+            });
+            let _ = DeleteObject(mask.into());
+            icon
+        }
+    }
+
+    /// The icon's pixels as straight-alpha BGRA rows, top-down.
+    fn icon_bitmap(&self, size: i32) -> Result<Dib> {
         let mut bitmap = Dib::new(size, size)?;
         let side = size as f32;
-        // SAFETY: draws into the DIB, then hands its bits to CreateIconIndirect, which copies them.
+        // SAFETY: draws into the DIB, which outlives the drawing.
         unsafe {
             self.target.BindDC(bitmap.dc, &RECT { left: 0, top: 0, right: size, bottom: size })?;
             self.target.BeginDraw();
@@ -232,16 +249,8 @@ impl Renderer {
                     }
                 }
             }
-            let mask = CreateBitmap(size, size, 1, 1, None);
-            let icon = CreateIconIndirect(&ICONINFO {
-                fIcon: true.into(),
-                hbmMask: mask,
-                hbmColor: bitmap.bitmap,
-                ..Default::default()
-            });
-            let _ = DeleteObject(mask.into());
-            icon
         }
+        Ok(bitmap)
     }
 
     fn draw(&self, frame: &Frame) -> Result<()> {

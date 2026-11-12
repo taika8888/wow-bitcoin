@@ -14,8 +14,8 @@ use windows::Win32::System::Threading::{
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToFileTime, SystemTimeToTzSpecificLocalTime};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CS_HREDRAW, CS_VREDRAW, GetCursorPos, GetWindowRect, IDC_ARROW, LoadCursorW, MONITORINFOF_PRIMARY, RegisterClassW,
-    WNDCLASSW, WNDPROC,
+    CS_HREDRAW, CS_VREDRAW, GetCursorPos, GetWindowRect, IDC_ARROW, LoadCursorW, LoadIconW, MONITORINFOF_PRIMARY,
+    RegisterClassW, WNDCLASSW, WNDPROC,
 };
 use windows::core::{BOOL, PCWSTR, PWSTR};
 
@@ -37,6 +37,8 @@ pub fn register_class(name: PCWSTR, proc: WNDPROC, background: Option<windows::W
             style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: proc,
             hInstance: instance.into(),
+            // The group icon build.rs links in, which also gives the class its small icon.
+            hIcon: LoadIconW(Some(instance.into()), PCWSTR(1 as _)).unwrap_or_default(),
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
             hbrBackground: background.unwrap_or_default(),
             lpszClassName: name,
