@@ -283,7 +283,7 @@ impl Shell {
         match command {
             Command::Settings => match &self.settings_window {
                 Some(window) => window.focus(),
-                None => match SettingsWindow::open(*self.app.settings(), foreground) {
+                None => match SettingsWindow::open(*self.app.settings(), self.overlay.hwnd(), foreground) {
                     Ok(window) => self.settings_window = Some(window),
                     Err(error) => eprintln!("could not open Settings: {error}"),
                 },

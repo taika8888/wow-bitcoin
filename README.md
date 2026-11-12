@@ -65,6 +65,7 @@ The **Settings** window has these options:
 - Refresh interval (2 to 300 seconds, default 5).
 - Show only while World of Warcraft is frontmost.
 - Lock position, and **Reset position**, which moves the ticker back to the top center of the screen.
+- On Windows, **Start with Windows**, which starts the ticker when you sign in. It adds a `BTCTicker` entry under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` and keeps no copy in the settings file. If you move the exe, untick and tick the box again.
 
 The app also remembers the last timeframe you chose and the last zoom.
 
@@ -155,7 +156,7 @@ It builds with warnings denied, runs clippy and the core's unit tests and model 
 
 Don't touch the mouse while it runs. It refuses to click any window but its own and the app's. If it sees the cursor move or presses it did not send, it stops sending input and reports that check INCONCLUSIVE and every later one INCONCLUSIVE as not run. It then still quits or kills the app it launched and checks that nothing is left behind.
 
-It also drags and resizes the open chart, checks that resizing respects the lock and saves the size, turns the wheel over the chart, and for a moment switches wheel routing to the focused window for this session only. It saves screenshots of the collapsed ticker, each timeframe's chart, the widest zoom and the Settings window to `target/verify/*.png`. The app it launches uses a throwaway settings file, never yours.
+It also drags and resizes the open chart, checks that resizing respects the lock and saves the size, turns the wheel over the chart, and for a moment switches wheel routing to the focused window for this session only. It saves screenshots of the collapsed ticker, each timeframe's chart, the widest zoom and the Settings window to `target/verify/*.png`. The app it launches uses a throwaway settings file, never yours, and its Start with Windows entry goes under `HKCU\Software\BTCTicker-test`, never your Run key.
 
 ## License
 

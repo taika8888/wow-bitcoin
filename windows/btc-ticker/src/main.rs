@@ -2,6 +2,7 @@
 //! BTC Ticker for Windows: a live Bitcoin price floating above World of Warcraft that never takes focus from the game,
 //! and a candlestick chart on click. `ticker-core` decides everything; this crate is the Win32 shell around it.
 
+mod autostart;
 mod foreground;
 mod menu;
 mod net;

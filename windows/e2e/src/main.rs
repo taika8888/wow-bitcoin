@@ -25,6 +25,9 @@ use verdict::Verdicts;
 const KRAKEN_TICKER: &str = "https://api.kraken.com/0/public/Ticker?pair=XBTUSD";
 const MENU_CLASS: &str = "BTCTickerMenu";
 const SETTINGS_CLASS: &str = "BTCTickerSettings";
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+/// Where a test run of the app keeps its Start with Windows value, as `BTCTicker-<pid>`.
+const AUTOSTART_TEST_KEY: &str = r"Software\BTCTicker-test";
 const MENU_ROWS: f64 = 3.0;
 const WHEEL_DELTA: i32 = 120;
 /// `MOUSEWHEEL_ROUTING_FOCUS`: the wheel goes to the focused window, as with "Scroll inactive windows" off.
@@ -154,6 +157,7 @@ fn run(report: &mut Report, app: &Path, shots: &Path, pid_file: Option<PathBuf>)
     let _ = std::fs::create_dir_all(&work);
     let user_settings = std::env::var("APPDATA").map(|appdata| PathBuf::from(appdata).join(r"BTCTicker\settings.json"));
     let user_settings_before = user_settings.as_ref().ok().map(std::fs::read);
+    let user_autostart_before = desktop::registry_string(RUN_KEY, "BTCTicker");
 
     let tag = 0x4254_4345 ^ std::process::id() as usize;
     fresh_install(report, app, &work.join("fresh-install"), tag, pid_file.as_deref());
@@ -235,6 +239,12 @@ fn run(report: &mut Report, app: &Path, shots: &Path, pid_file: Option<PathBuf>)
             "{} is byte for byte what it was before the run",
             user_settings.map_or_else(|_| "%APPDATA%".into(), |path| path.display().to_string())
         ),
+    );
+    let user_autostart = desktop::registry_string(RUN_KEY, "BTCTicker");
+    report.teardown(
+        user_autostart == user_autostart_before,
+        "user-autostart-untouched",
+        format!(r"HKCU\{RUN_KEY}\BTCTicker is what it was before the run: {user_autostart:?}"),
     );
     drop(session);
     let _ = std::fs::remove_dir_all(&work);
@@ -1102,18 +1112,20 @@ fn settings_window(report: &mut Report, session: &mut Session, shots: &Path) {
         });
     let saved = session.ticker.saved_settings();
     let only_the_lock = saved.is_some() && saved == expected;
-    desktop::post_close(window);
+    let autostart = start_with_windows(window, session);
+    desktop::post_escape(window);
     let handed_back = wait_until(3.0, || {
         (desktop::windows_of(pid, SETTINGS_CLASS).is_empty() && desktop::foreground() == session.game.hwnd)
             .then_some(())
     });
     report.check(
-        in_front && toggled.is_ok() && only_the_lock && handed_back.is_some(),
+        in_front && toggled.is_ok() && only_the_lock && autostart.is_ok() && handed_back.is_some(),
         "settings-window",
         format!(
-            "Settings opened {frame} in the foreground {in_front}; a real click on Lock position set locked {} ({}); the file changed in that key only {only_the_lock}; closing it gave the foreground back to the stand-in game {}",
+            "Settings opened {frame} in the foreground {in_front}; a real click on Lock position set locked {} ({}); the file changed in that key only {only_the_lock}; Start with Windows: {}; Esc closed it and gave the foreground back to the stand-in game {}",
             !was_locked,
             toggled.as_ref().map_or_else(Clone::clone, |_| "applied".to_string()),
+            autostart.as_ref().unwrap_or_else(|error| error),
             handed_back.is_some()
         ),
     );
@@ -1166,6 +1178,28 @@ fn second_launch(report: &mut Report, session: &Session, work: &Path) {
             closed.is_some()
         ),
     );
+}
+
+/// Ticks and unticks Start with Windows with messages to the checkbox. A test run writes its value under a key Windows
+/// never runs, named for its pid, so the user's Run key stays out of it.
+fn start_with_windows(window: HWND, session: &Session) -> Result<String, String> {
+    let value = format!("BTCTicker-{}", session.ticker.pid);
+    let checkbox = desktop::child(window, "Button", "Start with Windows").ok_or("no Start with Windows checkbox")?;
+    let expected = format!("\"{}\"", session.ticker.exe.display());
+    desktop::send_click(checkbox);
+    let written = desktop::registry_string(AUTOSTART_TEST_KEY, &value);
+    desktop::send_click(checkbox);
+    let left = desktop::registry_string(AUTOSTART_TEST_KEY, &value);
+    desktop::delete_registry_value(AUTOSTART_TEST_KEY, &value);
+    let place = format!(r"HKCU\{AUTOSTART_TEST_KEY}\{value}");
+    match (written, left) {
+        (None, _) => Err(format!("ticking it wrote no {place}")),
+        (Some(command), _) if !command.eq_ignore_ascii_case(&expected) => {
+            Err(format!("ticking it wrote {command} to {place}, not {expected}"))
+        }
+        (Some(_), Some(left)) => Err(format!("unticking it left {place} = {left}")),
+        (Some(command), None) => Ok(format!("ticking it wrote {place} = {command}, unticking removed it")),
+    }
 }
 
 fn quit(report: &mut Report, session: &mut Session) {

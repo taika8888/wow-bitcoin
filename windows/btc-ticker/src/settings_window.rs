@@ -6,7 +6,8 @@ use std::cell::{Cell, RefCell};
 use ticker_core::{Rgba, Settings};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
-    COLOR_BTNFACE, CreateFontIndirectW, CreateSolidBrush, DeleteObject, HBRUSH, HFONT, InvalidateRect,
+    COLOR_BTNFACE, CreateFontIndirectW, CreateSolidBrush, DeleteObject, GetMonitorInfoW, HBRUSH, HFONT, InvalidateRect,
+    MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromWindow,
 };
 use windows::Win32::UI::Controls::Dialogs::{CC_FULLOPEN, CC_RGBINIT, CHOOSECOLORW, ChooseColorW};
 use windows::Win32::UI::Controls::{
@@ -19,8 +20,8 @@ use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow, Syste
 use windows::Win32::UI::Input::KeyboardAndMouse::{EnableWindow, GetFocus};
 use windows::Win32::UI::WindowsAndMessaging::{
     BM_GETCHECK, BM_SETCHECK, BN_CLICKED, BS_AUTOCHECKBOX, BS_PUSHBUTTON, CB_ADDSTRING, CB_GETCURSEL, CB_SETCURSEL,
-    CBN_SELCHANGE, CBS_DROPDOWNLIST, CW_USEDEFAULT, CreateWindowExW, DefWindowProcW, DestroyWindow, EN_CHANGE,
-    ES_NUMBER, GWLP_USERDATA, GetDlgCtrlID, GetDlgItem, GetWindowLongPtrW, GetWindowTextW, HMENU, IsIconic, IsWindow,
+    CBN_SELCHANGE, CBS_DROPDOWNLIST, CreateWindowExW, DefWindowProcW, DestroyWindow, EN_CHANGE, ES_NUMBER,
+    GWLP_USERDATA, GetDlgCtrlID, GetDlgItem, GetWindowLongPtrW, GetWindowTextW, HMENU, IDCANCEL, IsIconic, IsWindow,
     NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SW_RESTORE, SW_SHOW, SWP_NOZORDER, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
     SendMessageW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, SetWindowTextW, ShowWindow, WINDOW_EX_STYLE,
     WINDOW_STYLE, WM_CLOSE, WM_COMMAND, WM_CTLCOLORSTATIC, WM_HSCROLL, WM_NCDESTROY, WM_SETFONT, WS_BORDER, WS_CAPTION,
@@ -28,6 +29,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{PCWSTR, Result, w};
 
+use crate::autostart;
 use crate::shell::{Event, deliver};
 use crate::win::{self, wide};
 
@@ -146,6 +148,7 @@ const TBM_GETPOS: u32 = 0x0400;
 const DECIMALS: i32 = 400;
 const REFRESH: i32 = 401;
 const RESET_POSITION: i32 = 402;
+const AUTOSTART: i32 = 403;
 /// A slider's value label and a color's swatch take their control's id plus this.
 const COMPANION: i32 = 50;
 
@@ -185,7 +188,8 @@ struct Form {
 }
 
 impl SettingsWindow {
-    pub fn open(settings: Settings, return_to: Option<HWND>) -> Result<SettingsWindow> {
+    /// Opens centered on the monitor that holds `ticker`.
+    pub fn open(settings: Settings, ticker: HWND, return_to: Option<HWND>) -> Result<SettingsWindow> {
         let class = w!("BTCTickerSettings");
         win::register_class(class, Some(procedure), Some(HBRUSH((COLOR_BTNFACE.0 + 1) as usize as *mut _)));
         let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
@@ -196,13 +200,17 @@ impl SettingsWindow {
                 dwICC: ICC_BAR_CLASSES | ICC_UPDOWN_CLASS | ICC_STANDARD_CLASSES,
             };
             let _ = InitCommonControlsEx(&controls);
+            let mut monitor = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+            let _ = GetMonitorInfoW(MonitorFromWindow(ticker, MONITOR_DEFAULTTOPRIMARY), &mut monitor);
+            let work = monitor.rcWork;
+            // Created on the ticker's monitor, so the controls are laid out for that monitor's DPI.
             let hwnd = CreateWindowExW(
                 WINDOW_EX_STYLE(0),
                 class,
                 w!("BTC Ticker Settings"),
                 style,
-                CW_USEDEFAULT,
-                CW_USEDEFAULT,
+                work.left,
+                work.top,
                 100,
                 100,
                 None,
@@ -229,12 +237,12 @@ impl SettingsWindow {
                 bottom: height,
             };
             let _ = AdjustWindowRectExForDpi(&mut frame, style, false, WINDOW_EX_STYLE(0), dpi);
-            let work = win::screens().primary.work;
             let (width, height) = (frame.right - frame.left, frame.bottom - frame.top);
-            let x = (work.mid_x() as i32) - width / 2;
-            let y = (work.mid_y() as i32) - height / 2;
+            let x = (work.left + work.right - width) / 2;
+            let y = (work.top + work.bottom - height) / 2;
             let _ = SetWindowPos(hwnd, None, x, y, width, height, SWP_NOZORDER);
             apply(hwnd, settings);
+            show_autostart(GetDlgItem(Some(hwnd), AUTOSTART).unwrap_or_default());
             let _ = ShowWindow(hwnd, SW_SHOW);
             let _ = SetForegroundWindow(hwnd);
             OPEN.set(hwnd.0 as isize);
@@ -360,6 +368,8 @@ fn build(hwnd: HWND, form: &Form, dpi: u32) -> i32 {
         check(item, y);
         y += ROW;
     }
+    add(WC_BUTTONW, "Start with Windows", tab | BS_AUTOCHECKBOX, MARGIN, y, LABEL_WIDTH + CONTROL_WIDTH, AUTOSTART);
+    y += ROW;
     add(WC_BUTTONW, "Reset position", tab | BS_PUSHBUTTON, MARGIN, y, 130, RESET_POSITION);
     y += ROW;
     scale(y + MARGIN - (ROW - CONTROL_HEIGHT))
@@ -399,6 +409,13 @@ fn apply(hwnd: HWND, settings: Settings) {
         let _ = EnableWindow(item(RESET_POSITION), settings.position.is_some());
     }
     form.syncing.set(false);
+}
+
+/// The box follows the registry, so after a failed write it still shows what Windows will do at login.
+fn show_autostart(checkbox: HWND) {
+    let state = if autostart::enabled() { BST_CHECKED.0 } else { 0 };
+    // SAFETY: plain control message.
+    unsafe { SendMessageW(checkbox, BM_SETCHECK, Some(WPARAM(state as usize)), None) };
 }
 
 fn edit(form: &Form, change: impl FnOnce(&mut Settings)) {
@@ -451,6 +468,14 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
                     }
                 } else if id == RESET_POSITION && code == BN_CLICKED {
                     edit(form, |settings| settings.position = None);
+                } else if id == AUTOSTART && code == BN_CLICKED {
+                    let on = SendMessageW(control, BM_GETCHECK, None, None).0 == BST_CHECKED.0 as isize;
+                    if let Err(error) = autostart::set(on) {
+                        eprintln!("could not change Start with Windows: {error}");
+                    }
+                    show_autostart(control);
+                } else if id == IDCANCEL.0 {
+                    deliver(Event::SettingsClosed);
                 }
                 return LRESULT(0);
             }
