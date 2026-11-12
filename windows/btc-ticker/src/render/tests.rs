@@ -125,3 +125,39 @@ fn a_translucent_price_color_fades_the_time_labels() {
     assert!((170..=179).contains(&opaque), "opaque white labels peak at 70% of 255, not {opaque}");
     assert!((50..=63).contains(&faded), "35% white labels peak at 35% of 70% of 255, not {faded}");
 }
+
+/// Regenerates `app.ico`, which build.rs links into the exe, from the tray icon's drawing:
+/// `cargo test -p btc-ticker --release -- --ignored app_icon`.
+#[test]
+#[ignore = "rewrites a committed file"]
+fn app_icon_is_the_tray_icon() {
+    let renderer = Renderer::new().unwrap();
+    let images: Vec<(u8, Vec<u8>)> = [16, 20, 24, 32, 40, 48, 64, 256]
+        .map(|size: i32| {
+            let mut bitmap = renderer.icon_bitmap(size).unwrap();
+            let rgba: Vec<u8> = bitmap
+                .pixels_mut()
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .flat_map(|&[blue, green, red, alpha]| [red, green, blue, alpha])
+                .collect();
+            let mut png = Vec::new();
+            let mut encoder = png::Encoder::new(&mut png, size as u32, size as u32);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_compression(png::Compression::High);
+            encoder.write_header().unwrap().write_image_data(&rgba).unwrap();
+            (size as u8, png)
+        })
+        .into();
+    let mut ico = [0u16, 1, images.len() as u16].map(u16::to_le_bytes).concat();
+    let mut offset = ico.len() + 16 * images.len();
+    for (side, png) in &images {
+        ico.extend([*side, *side, 0, 0]);
+        ico.extend([1u16, 32].map(u16::to_le_bytes).concat());
+        ico.extend([png.len() as u32, offset as u32].map(u32::to_le_bytes).concat());
+        offset += png.len();
+    }
+    images.iter().for_each(|(_, png)| ico.extend(png));
+    std::fs::write(Path::new(env!("CARGO_MANIFEST_DIR")).join("app.ico"), ico).unwrap();
+}
