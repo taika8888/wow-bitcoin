@@ -25,7 +25,7 @@ All of this lives in `crates/ticker-core/tests/model_check/`, in the `model_chec
 - **a hidden overlay is never pressed or dragging.** Prevents a stale press from turning into a drag when the overlay reappears.
 - **SaveSettings is emitted iff an in-app input changed the settings, and carries the new settings.** Prevents lost settings (no save), useless disk writes (unchanged save), and writing back a file the user is editing (echo of `SettingsChanged`).
 - **the feed status is FeedStatus::derive of the last good quote, the start and the clock.** Prevents the ticker showing live for an old price, or offline while a good quote is fresh.
-- **Render is emitted iff the overlay, the feed status or a chart load changed.** Prevents a screen that lags the state (missed render) and wasted redraws.
+- **Render is emitted iff the overlay, the feed status, the shown text or a chart load changed.** Prevents a screen that lags the state (missed render), a stale price whose age stops counting, and wasted redraws. The shown text is the ticker line and the tray tooltip.
 - **nothing is overdue, and with no quote out the next wake is no later than the next quote.** Prevents a shell timer armed by `App::next_wake` from sleeping past a due fetch or status change.
 
 `overlay.rs`, the reducer check (18 invariants, ported from the macOS `OverlayModelCheckTests.swift`):
@@ -111,7 +111,7 @@ To prove the checks can still fail, run this from the repo root:
 powershell -NoProfile -ExecutionPolicy Bypass -File windows\scripts\mutants.ps1 [-Only <mutant-name>]
 ```
 
-It needs a clean `crates/ticker-core/src`, and it refuses to start otherwise. A killed run skips its restore and can leave a mutant in the source, so before you commit after an interrupted run, check `git status` and restore with `git checkout -- crates/ticker-core/src`. Each mutant takes about 13 s, and the full set of 23 takes about 5 minutes. Logs go to `target/verify/mutants/<name>.log`.
+It needs a clean `crates/ticker-core/src`, and it refuses to start otherwise. A killed run skips its restore and can leave a mutant in the source, so before you commit after an interrupted run, check `git status` and restore with `git checkout -- crates/ticker-core/src`. Each mutant takes about 13 s, and the full set of 24 takes about 5 minutes. Logs go to `target/verify/mutants/<name>.log`.
 
 ## Read a counterexample
 
@@ -157,7 +157,8 @@ Each checker keeps its own records (`World` in `app.rs` and `overlay.rs`). These
 | tick-does-not-advance-time | src/app.rs | clock advance on tick | the feed status is FeedStatus::derive of the last good quote, the start and the clock | PASS |
 | settings-file-written-back | src/app.rs | no echo of file changes | SaveSettings is emitted iff an in-app input changed the settings, and carries the new settings | PASS |
 | saves-unchanged-settings | src/app.rs | save only on change | SaveSettings is emitted iff an in-app input changed the settings, and carries the new settings | PASS |
-| no-render-for-chart-loads | src/app.rs | render on chart load change | Render is emitted iff the overlay, the feed status or a chart load changed | PASS |
+| no-render-for-chart-loads | src/app.rs | render on chart load change | Render is emitted iff the overlay, the feed status, the shown text or a chart load changed | PASS |
+| stale-age-not-redrawn | src/app.rs | render when the shown text changes | Render is emitted iff the overlay, the feed status, the shown text or a chart load changed | PASS, by hand with the same cargo command, added after the sync commit |
 | click-moves-ticker | src/overlay.rs | click does not move | a click never moves the ticker | PASS |
 | locked-check-dropped-from-pointer-move | src/overlay.rs | lock test on pointer move | a locked press released over the body is a click, however far the pointer moved | PASS |
 | locked-ticker-drags | src/overlay.rs | both lock tests | a locked ticker never drags | PASS |
@@ -174,7 +175,7 @@ Each checker keeps its own records (`World` in `app.rs` and `overlay.rs`). These
 
 | Check | Covers |
 | --- | --- |
-| App (`tests/model_check/app.rs`) | `src/app.rs`: `App::new`, `App::handle`, `App::next_wake`, `App::status`, `App::chart_load`, `advance`, `issue`. `src/chart.rs`: `ChartFeed::{wanted, due, due_at, begin, awaits, finish}`, `CandleLoad::{due_at, is_loading, failure}`. `src/feed.rs`: `FeedSchedule::{started, finished, woke, next_start, is_due, delay, request_timeout}`, `FeedStatus::derive`. `src/kraken.rs`: `quote_from`, `candles_from` (on the two fixed bodies and `Unreachable`). `src/overlay.rs`: `OverlayState::reduce`, `is_visible`, `mode`. `src/market.rs`: `Zoom::stepped`. `src/settings.rs`: `Settings::clamped`. |
+| App (`tests/model_check/app.rs`) | `src/app.rs`: `App::new`, `App::handle`, `App::next_wake`, `App::status`, `App::display`, `App::tooltip`, `App::chart_load`, `advance`, `issue`. `src/display.rs`: `TickerDisplay::{new, tooltip, age}`. `src/chart.rs`: `ChartFeed::{wanted, due, due_at, begin, awaits, finish}`, `CandleLoad::{due_at, is_loading, failure}`. `src/feed.rs`: `FeedSchedule::{started, finished, woke, next_start, is_due, delay, request_timeout}`, `FeedStatus::derive`. `src/kraken.rs`: `quote_from`, `candles_from` (on the two fixed bodies and `Unreachable`). `src/overlay.rs`: `OverlayState::reduce`, `is_visible`, `mode`. `src/market.rs`: `Zoom::stepped`. `src/settings.rs`: `Settings::clamped`. |
 | Reducer (`tests/model_check/overlay.rs`) | `src/overlay.rs`: `OverlayState::{new, reduce, mode, is_visible, drag, settings}`, the `Zoom` event included. `src/market.rs`: `Zoom::stepped`. `src/settings.rs`: `Settings::clamped`. |
 | Engine (`tests/model_check/engine.rs`, `words.rs`) | The search, fingerprints and counterexample wording, shared by both checks. |
 | Mutants (`windows/scripts/mutants.ps1`) | The rows above. |

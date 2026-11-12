@@ -312,6 +312,7 @@ impl Shell {
         if let Err(error) = self.overlay.draw(&self.app, &win::screens()) {
             eprintln!("could not draw the overlay: {error}");
         }
+        self.tray.set_tip(&self.app.tooltip());
         if let Some(window) = &self.settings_window {
             window.sync(*self.app.settings());
         }

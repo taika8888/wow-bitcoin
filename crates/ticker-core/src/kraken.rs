@@ -52,7 +52,7 @@ impl FetchFailure {
             FetchFailure::Unreachable => "Kraken is not answering".to_string(),
             FetchFailure::Status(code) => format!("Kraken answered HTTP {code}"),
             FetchFailure::Rejected(KrakenError::Api(errors)) => format!("Kraken refused: {}", errors.join(", ")),
-            FetchFailure::Rejected(_) => "Kraken sent candles this app cannot read".to_string(),
+            FetchFailure::Rejected(_) => "Kraken sent data this app cannot read".to_string(),
         }
     }
 }

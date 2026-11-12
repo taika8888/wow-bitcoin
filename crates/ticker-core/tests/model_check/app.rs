@@ -107,10 +107,12 @@ const INVARIANTS: [Invariant; 14] = [
         let refresh = f64::from(t.after.app.settings().refresh_seconds);
         t.after.app.status() == FeedStatus::derive(t.after.last_good.as_ref(), T0, t.after.clock, refresh)
     }),
-    ("Render is emitted iff the overlay, the feed status or a chart load changed", |t| {
+    ("Render is emitted iff the overlay, the feed status, the shown text or a chart load changed", |t| {
         let (before, after) = (&t.before.app, &t.after.app);
         let changed = before.overlay() != after.overlay()
             || before.status() != after.status()
+            || before.display() != after.display()
+            || before.tooltip() != after.tooltip()
             || Timeframe::ALL.iter().any(|timeframe| before.chart_load(*timeframe) != after.chart_load(*timeframe));
         t.effects.contains(&Effect::Render) == changed
     }),
@@ -341,6 +343,7 @@ struct Reached {
     quote_out_and_hidden: bool,
     two_timeframes_loading: bool,
     stale: bool,
+    stale_for_a_minute: bool,
     offline: bool,
     backed_off: bool,
     dragging: bool,
@@ -356,6 +359,8 @@ fn check(name: &'static str, alphabet: Alphabet, depth: usize) -> (Report, Reach
         reached.two_timeframes_loading |=
             Timeframe::ALL.iter().filter(|t| app.chart_load(**t).is_loading()).count() >= 2;
         reached.stale |= matches!(app.status(), FeedStatus::Stale(_));
+        reached.stale_for_a_minute |=
+            matches!(app.status(), FeedStatus::Stale(quote) if world.clock.seconds_since(quote.fetched_at) >= 60.0);
         reached.offline |= app.status() == FeedStatus::Offline;
         reached.backed_off |= world.quote_failures >= 2;
         reached.dragging |= app.overlay().drag() == DragPhase::Dragging;
@@ -379,6 +384,10 @@ fn every_interleaving_of_every_input_keeps_the_app_invariants() {
     assert!(reached.two_timeframes_loading, "two timeframes loading at once must be reachable");
     assert!(reached.stale, "a stale quote must be reachable, or the status invariant never sees one");
     assert!(reached.offline, "offline must be reachable");
+    assert!(
+        reached.stale_for_a_minute,
+        "a quote stale for a minute must be reachable, or the age never turns to minutes"
+    );
     assert!(
         reached.zoomed_while_loading,
         "a zoomed chart with candles out or loaded must be reachable, or zooming is never checked against fetches"

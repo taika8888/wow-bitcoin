@@ -228,7 +228,44 @@ fn the_quote_turns_stale_on_the_tick_that_crosses_three_missed_refreshes() {
     assert!(!renders(&shell.tick(15.0)), "nothing on screen changes at exactly the threshold");
     assert!(renders(&shell.tick(15.5)));
     assert_eq!(shell.app.status(), FeedStatus::Stale(quote));
-    assert_eq!(shell.app.display().text(), "BTC $80,482  +0.60%  stale");
+    assert_eq!(shell.app.display().text(), "BTC $80,482  +0.60%  stale 15s");
+}
+
+#[test]
+fn a_stale_price_redraws_when_its_shown_age_changes() {
+    let mut shell = Shell::new(Settings::default());
+    shell.tick(0.0);
+    shell.finish_quote(price_body(80482.4), 0.0);
+    shell.tick(5.0);
+    shell.tick(15.5);
+    assert!(!renders(&shell.tick(15.9)), "the age still reads 15s");
+    assert!(renders(&shell.tick(16.0)));
+    assert_eq!(shell.app.display().text(), "BTC $80,482  +0.60%  stale 16s");
+    assert!(renders(&shell.tick(60.0)));
+    assert_eq!(shell.app.display().text(), "BTC $80,482  +0.60%  stale 1m");
+    assert!(!renders(&shell.tick(119.0)), "the age still reads 1m");
+    assert!(renders(&shell.tick(120.0)));
+}
+
+#[test]
+fn a_failed_quote_says_why_until_one_succeeds() {
+    let mut shell = Shell::new(Settings::default());
+    shell.tick(0.0);
+    shell.finish_quote(price_body(80482.4), 0.0);
+    shell.tick(5.0);
+    shell.finish_quote(HttpOutcome::Unreachable, 5.0);
+    assert_eq!(shell.app.quote_failure(), Some(&FetchFailure::Unreachable));
+    assert_eq!(shell.app.tooltip(), "BTC Ticker · $80,482 · live", "one failure does not make the price wrong");
+    shell.tick(10.0);
+    let effects = shell.finish_quote(answered(r#"{"error":["EService:Unavailable"]}"#), 10.0);
+    assert!(!renders(&effects), "nothing shown changed while the price is live");
+    assert!(renders(&shell.tick(16.0)));
+    assert_eq!(shell.app.tooltip(), "BTC Ticker · $80,482 · stale 16s · Kraken refused: EService:Unavailable");
+    shell.tick(20.0);
+    let effects = shell.finish_quote(price_body(80500.0), 20.0);
+    assert!(renders(&effects));
+    assert_eq!(shell.app.quote_failure(), None);
+    assert_eq!(shell.app.tooltip(), "BTC Ticker · $80,500 · live");
 }
 
 #[test]
@@ -240,6 +277,7 @@ fn without_any_quote_the_ticker_goes_from_loading_to_offline() {
     shell.tick(16.0);
     assert_eq!(shell.app.status(), FeedStatus::Offline);
     assert_eq!(shell.app.display().text(), "BTC offline");
+    assert_eq!(shell.app.tooltip(), "BTC Ticker · offline · Kraken answered HTTP 503");
 }
 
 #[test]
@@ -411,10 +449,10 @@ fn the_placeholder_names_what_went_wrong() {
     for (outcome, message) in [
         (HttpOutcome::Unreachable, "Kraken is not answering"),
         (HttpOutcome::Answered { status: 503, body: Vec::new() }, "Kraken answered HTTP 503"),
-        (answered(r#"{"error":[],"result":{"XXBTZUSD":[[1,"10","12"]]}}"#), "Kraken sent candles this app cannot read"),
+        (answered(r#"{"error":[],"result":{"XXBTZUSD":[[1,"10","12"]]}}"#), "Kraken sent data this app cannot read"),
         (
             answered(r#"{"error":[],"result":{"XXBTZUSD":[[1,"10","9","12","11"]]}}"#),
-            "Kraken sent candles this app cannot read",
+            "Kraken sent data this app cannot read",
         ),
         (answered(r#"{"error":["EGeneral:Too many requests"]}"#), "Kraken refused: EGeneral:Too many requests"),
     ] {
@@ -425,7 +463,7 @@ fn the_placeholder_names_what_went_wrong() {
     }
     assert_eq!(
         FetchFailure::Rejected(KrakenError::InvalidValue("row 3".to_string())).message(),
-        "Kraken sent candles this app cannot read"
+        "Kraken sent data this app cannot read"
     );
 }
 

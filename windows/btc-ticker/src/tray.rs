@@ -2,7 +2,7 @@
 
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_SETVERSION, NOTIFYICON_VERSION_4,
+    NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICON_VERSION_4,
     NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -30,13 +30,31 @@ impl Tray {
             hIcon: icon,
             ..Default::default()
         };
-        for (slot, unit) in data.szTip.iter_mut().zip("BTC Ticker".encode_utf16()) {
-            *slot = unit;
-        }
         data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
-        let tray = Tray { data };
+        let mut tray = Tray { data };
+        tray.write_tip("BTC Ticker");
         tray.show();
         tray
+    }
+
+    /// Kept for `show`, so an Explorer restart brings the icon back with the current text.
+    pub fn set_tip(&mut self, text: &str) {
+        if self.write_tip(text) {
+            // SAFETY: passes a fully initialized struct for the icon this Tray added.
+            let _ = unsafe { Shell_NotifyIconW(NIM_MODIFY, &self.data) };
+        }
+    }
+
+    /// Reports whether the text changed.
+    fn write_tip(&mut self, text: &str) -> bool {
+        let mut tip = [0u16; 128];
+        let room = tip.len() - 1;
+        for (slot, unit) in tip[..room].iter_mut().zip(text.encode_utf16()) {
+            *slot = unit;
+        }
+        let changed = tip != self.data.szTip;
+        self.data.szTip = tip;
+        changed
     }
 
     /// Also called when Explorer restarts, which forgets every icon.

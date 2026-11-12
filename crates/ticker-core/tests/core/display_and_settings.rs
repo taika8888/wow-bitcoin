@@ -1,6 +1,6 @@
 use ticker_core::{
-    DisplaySegment, FeedSchedule, FeedStatus, Quote, Rgba, ScreenPoint, Settings, TickerDisplay, Timeframe, Timestamp,
-    Tone, Zoom,
+    DisplaySegment, FeedSchedule, FeedStatus, FetchFailure, KrakenError, Quote, Rgba, ScreenPoint, Settings,
+    TickerDisplay, Timeframe, Timestamp, Tone, Zoom,
 };
 
 const FETCHED_AT: Timestamp = Timestamp::from_unix_seconds(1_793_847_300.0);
@@ -40,7 +40,7 @@ fn change_formatting() {
 
 #[test]
 fn live_ticker_text() {
-    let display = TickerDisplay::new(&FeedStatus::Live(QUOTE), &Settings::default());
+    let display = TickerDisplay::new(&FeedStatus::Live(QUOTE), &Settings::default(), FETCHED_AT);
     assert_eq!(display.text(), "BTC $80,482  +0.05%");
     assert_eq!(display.segments.last(), Some(&DisplaySegment::new("+0.05%", Tone::Up)));
     assert!(!display.dimmed);
@@ -49,30 +49,76 @@ fn live_ticker_text() {
 #[test]
 fn label_and_change_are_optional() {
     let mut settings = Settings { show_label: false, decimals: 2, ..Settings::default() };
-    assert_eq!(TickerDisplay::new(&FeedStatus::Live(QUOTE), &settings).text(), "$80,482.40  +0.05%");
+    assert_eq!(TickerDisplay::new(&FeedStatus::Live(QUOTE), &settings, FETCHED_AT).text(), "$80,482.40  +0.05%");
     settings.show_label = true;
     settings.show_change = false;
-    assert_eq!(TickerDisplay::new(&FeedStatus::Live(QUOTE), &settings).text(), "BTC $80,482.40");
+    assert_eq!(TickerDisplay::new(&FeedStatus::Live(QUOTE), &settings, FETCHED_AT).text(), "BTC $80,482.40");
 }
 
 #[test]
 fn flat_change_is_neutral() {
     let flat = Quote { price: 80442.01, open_24h: 80442.0, fetched_at: FETCHED_AT };
-    let display = TickerDisplay::new(&FeedStatus::Live(flat), &Settings::default());
+    let display = TickerDisplay::new(&FeedStatus::Live(flat), &Settings::default(), FETCHED_AT);
     assert_eq!(display.text(), "BTC $80,442  0.00%");
     assert!(display.segments.iter().all(|segment| segment.tone == Tone::Neutral));
 }
 
 #[test]
+fn a_stale_age_counts_whole_seconds_then_minutes_hours_and_days() {
+    for (seconds, age) in [
+        (-2.0, "0s"),
+        (0.0, "0s"),
+        (15.9, "15s"),
+        (59.99, "59s"),
+        (60.0, "1m"),
+        (3599.0, "59m"),
+        (3600.0, "1h"),
+        (86_399.0, "23h"),
+        (86_400.0, "1d"),
+        (10.0 * 86_400.0, "10d"),
+    ] {
+        assert_eq!(TickerDisplay::age(FETCHED_AT, FETCHED_AT.plus(seconds)), age, "{seconds} s old");
+    }
+}
+
+#[test]
+fn the_tooltip_gives_the_price_its_state_and_why_it_is_not_updating() {
+    let settings = Settings::default();
+    let unreachable = Some(&FetchFailure::Unreachable);
+    let later = FETCHED_AT.plus(200.0);
+    for (status, failure, tooltip) in [
+        (FeedStatus::Live(QUOTE), None, "BTC Ticker · $80,482 · live"),
+        (FeedStatus::Live(QUOTE), unreachable, "BTC Ticker · $80,482 · live"),
+        (FeedStatus::Stale(QUOTE), unreachable, "BTC Ticker · $80,482 · stale 3m · Kraken is not answering"),
+        (FeedStatus::Stale(QUOTE), None, "BTC Ticker · $80,482 · stale 3m"),
+        (FeedStatus::Offline, Some(&FetchFailure::Status(503)), "BTC Ticker · offline · Kraken answered HTTP 503"),
+        (FeedStatus::Loading, None, "BTC Ticker · loading"),
+    ] {
+        assert_eq!(TickerDisplay::tooltip(&status, failure, &settings, later), tooltip);
+    }
+    let two_decimals = Settings { decimals: 2, ..settings };
+    let live = TickerDisplay::tooltip(&FeedStatus::Live(QUOTE), None, &two_decimals, FETCHED_AT);
+    assert_eq!(live, "BTC Ticker · $80,482.40 · live");
+}
+
+#[test]
+fn a_long_reason_is_cut_to_fit_the_tray_tooltip() {
+    let refused = FetchFailure::Rejected(KrakenError::Api(vec!["EService:Unavailable ü".repeat(10)]));
+    let tooltip = TickerDisplay::tooltip(&FeedStatus::Offline, Some(&refused), &Settings::default(), FETCHED_AT);
+    assert_eq!(tooltip.encode_utf16().count(), TickerDisplay::TOOLTIP_MAX_UTF16);
+    assert!(tooltip.starts_with("BTC Ticker · offline · Kraken refused: EService:Unavailable"));
+}
+
+#[test]
 fn not_live_is_dimmed_and_labelled() {
     let settings = Settings::default();
-    let stale = TickerDisplay::new(&FeedStatus::Stale(QUOTE), &settings);
-    assert_eq!(stale.text(), "BTC $80,482  +0.05%  stale");
+    let stale = TickerDisplay::new(&FeedStatus::Stale(QUOTE), &settings, FETCHED_AT.plus(200.0));
+    assert_eq!(stale.text(), "BTC $80,482  +0.05%  stale 3m");
     assert!(stale.dimmed);
-    let offline = TickerDisplay::new(&FeedStatus::Offline, &settings);
+    let offline = TickerDisplay::new(&FeedStatus::Offline, &settings, FETCHED_AT);
     assert_eq!(offline.text(), "BTC offline");
     assert!(offline.dimmed);
-    let loading = TickerDisplay::new(&FeedStatus::Loading, &settings);
+    let loading = TickerDisplay::new(&FeedStatus::Loading, &settings, FETCHED_AT);
     assert_eq!(loading.text(), "BTC ...");
     assert!(loading.dimmed);
 }

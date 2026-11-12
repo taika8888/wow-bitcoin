@@ -27,6 +27,7 @@ pub struct SnapshotWindow {
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
     pub text: String,
+    pub tooltip: String,
     pub feed: &'static str,
     /// When the quote on screen was fetched, in seconds since the Unix epoch.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -61,6 +62,7 @@ impl Snapshot {
         let chart = app.chart(window.max_bars);
         Snapshot {
             text: app.display().text(),
+            tooltip: app.tooltip(),
             feed: status.name(),
             fetched_at: status.quote().map(|quote| quote.fetched_at.unix_seconds()),
             mode: app.overlay().mode().name(),

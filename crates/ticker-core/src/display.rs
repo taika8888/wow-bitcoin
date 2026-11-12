@@ -1,7 +1,9 @@
 use serde::Serialize;
 
 use crate::feed::FeedStatus;
+use crate::kraken::FetchFailure;
 use crate::settings::Settings;
+use crate::time::Timestamp;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -35,7 +37,10 @@ pub struct TickerDisplay {
 }
 
 impl TickerDisplay {
-    pub fn new(status: &FeedStatus, settings: &Settings) -> Self {
+    /// The tray tooltip's limit: `szTip` holds 128 UTF-16 units with the terminating NUL.
+    pub const TOOLTIP_MAX_UTF16: usize = 127;
+
+    pub fn new(status: &FeedStatus, settings: &Settings, now: Timestamp) -> Self {
         let label = if settings.show_label { "BTC " } else { "" };
         match status {
             FeedStatus::Loading => {
@@ -54,7 +59,7 @@ impl TickerDisplay {
                     segments.push(DisplaySegment::new(text, tone));
                 }
                 if stale {
-                    segments.push(DisplaySegment::neutral("  stale"));
+                    segments.push(DisplaySegment::neutral(format!("  stale {}", Self::age(quote.fetched_at, now))));
                 }
                 Self { segments, dimmed: stale }
             }
@@ -63,6 +68,43 @@ impl TickerDisplay {
 
     pub fn text(&self) -> String {
         self.segments.iter().map(|segment| segment.text.as_str()).collect()
+    }
+
+    /// Leaves out `failure` while the price is live, because one failed request does not make the price wrong.
+    pub fn tooltip(status: &FeedStatus, failure: Option<&FetchFailure>, settings: &Settings, now: Timestamp) -> String {
+        let mut parts = vec!["BTC Ticker".to_string()];
+        match status {
+            FeedStatus::Loading => parts.push("loading".to_string()),
+            FeedStatus::Offline => parts.push("offline".to_string()),
+            FeedStatus::Live(quote) => parts.extend([Self::price(quote.price, settings.decimals), "live".to_string()]),
+            FeedStatus::Stale(quote) => parts.extend([
+                Self::price(quote.price, settings.decimals),
+                format!("stale {}", Self::age(quote.fetched_at, now)),
+            ]),
+        }
+        if let Some(failure) = failure.filter(|_| !matches!(status, FeedStatus::Live(_))) {
+            parts.push(failure.message());
+        }
+        let mut tooltip = String::new();
+        let mut units = 0;
+        for character in parts.join(" · ").chars() {
+            units += character.len_utf16();
+            if units > Self::TOOLTIP_MAX_UTF16 {
+                break;
+            }
+            tooltip.push(character);
+        }
+        tooltip
+    }
+
+    pub fn age(fetched_at: Timestamp, now: Timestamp) -> String {
+        let seconds = now.seconds_since(fetched_at).max(0.0) as u64;
+        match seconds {
+            0..60 => format!("{seconds}s"),
+            60..3600 => format!("{}m", seconds / 60),
+            3600..86_400 => format!("{}h", seconds / 3600),
+            _ => format!("{}d", seconds / 86_400),
+        }
     }
 
     /// US dollars with en_US grouping, rounded half away from zero to `decimals` places.
