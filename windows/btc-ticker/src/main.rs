@@ -14,13 +14,24 @@ mod tray;
 mod wheel;
 mod win;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError};
+use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
-use windows::core::{PCWSTR, w};
+use windows::core::{HSTRING, PCWSTR, w};
 
 fn main() {
     let config = config();
+    // SAFETY: the mutex handle is never closed, so Windows releases it only when this process exits.
+    let running = unsafe {
+        let _ = CreateMutexW(None, false, &HSTRING::from(format!(r"Local\{}", config.instance)));
+        GetLastError() == ERROR_ALREADY_EXISTS
+    };
+    if running {
+        shell::open_settings_in(&config.instance);
+        return;
+    }
     let unattended = config.state_file.is_some();
     if let Err(error) = shell::run(config) {
         let message = format!("BTC Ticker could not start: {error}");
@@ -48,9 +59,35 @@ fn config() -> shell::Config {
         }
     };
     shell::Config {
+        instance: instance(&settings_file),
         settings_file,
         seed,
         state_file: variable("BTCTICKER_STATE_FILE").map(PathBuf::from),
         input_tag: variable("BTCTICKER_INPUT_TAG").and_then(|tag| tag.parse().ok()),
+    }
+}
+
+/// Names the one ticker allowed per settings file. FNV-1a rather than std's hasher, which may change between builds.
+fn instance(settings_file: &Path) -> String {
+    let path = std::path::absolute(settings_file).unwrap_or_else(|_| settings_file.to_path_buf());
+    let hash = path
+        .to_string_lossy()
+        .to_lowercase()
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3));
+    format!("BTCTicker-{hash:016x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::instance;
+
+    #[test]
+    fn one_settings_file_names_one_instance_however_it_is_spelled() {
+        let file = instance(Path::new(r"C:\Users\a\AppData\Roaming\BTCTicker\settings.json"));
+        assert_eq!(file, instance(Path::new(r"c:\users\A\AppData\Roaming\BTCTicker\..\BTCTicker\Settings.json")));
+        assert_ne!(file, instance(Path::new(r"C:\Users\a\AppData\Local\Temp\BTCTicker\settings.json")));
     }
 }
