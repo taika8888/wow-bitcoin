@@ -85,11 +85,16 @@ jobs:
           plutil -replace CFBundleShortVersionString -string "$version" Support/Info.plist
           plutil -replace CFBundleVersion -string "$version" Support/Info.plist
 
-      # bundle.sh signs the app ad hoc, so the zip needs no second codesign.
+      # bundle.sh signs the app ad hoc, so the zip needs no second codesign. UNIVERSAL=1 makes one binary that runs on
+      # Apple silicon and Intel Macs, and lipo fails the job if either slice is missing.
       - name: Bundle and zip BTC Ticker.app
+        env:
+          UNIVERSAL: "1"
         run: |
           app="build/BTC Ticker.app"
           scripts/bundle.sh
+          lipo "$app/Contents/MacOS/BTCTicker" -verify_arch arm64 x86_64
+          lipo -info "$app/Contents/MacOS/BTCTicker"
           codesign --verify --strict --verbose=2 "$app"
           ditto -c -k --keepParent "$app" btc-ticker-macos.zip
 
