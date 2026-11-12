@@ -11,12 +11,12 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::UI::HiDpi::GetSystemMetricsForDpi;
 use windows::Win32::UI::Shell::{NIN_SELECT, NINF_KEY};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId,
-    IsDialogMessageW, KillTimer, MSG, PBT_APMRESUMEAUTOMATIC, PostQuitMessage, RegisterWindowMessageW, SM_CXSMICON,
-    SPI_SETWORKAREA, SetTimer, TranslateMessage, WINDOW_EX_STYLE, WM_APP, WM_CLOSE, WM_CONTEXTMENU, WM_DISPLAYCHANGE,
-    WM_POWERBROADCAST, WM_SETTINGCHANGE, WM_TIMER, WS_OVERLAPPED,
+    AllowSetForegroundWindow, CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowW, GetForegroundWindow,
+    GetMessageW, GetWindowThreadProcessId, IsDialogMessageW, KillTimer, MSG, PBT_APMRESUMEAUTOMATIC, PostMessageW,
+    PostQuitMessage, RegisterWindowMessageW, SM_CXSMICON, SPI_SETWORKAREA, SetTimer, TranslateMessage, WINDOW_EX_STYLE,
+    WM_APP, WM_CLOSE, WM_CONTEXTMENU, WM_DISPLAYCHANGE, WM_POWERBROADCAST, WM_SETTINGCHANGE, WM_TIMER, WS_OVERLAPPED,
 };
-use windows::core::{Result, w};
+use windows::core::{HSTRING, PCWSTR, Result, w};
 
 use crate::foreground;
 use crate::menu::{Command, Popup};
@@ -50,6 +50,8 @@ pub enum Event {
 
 /// Where the app keeps its files, and the hooks the end-to-end check uses.
 pub struct Config {
+    /// Names the main window, so a second launch on the same settings file can find this one.
+    pub instance: String,
     pub settings_file: PathBuf,
     /// Settings to start from, replacing the file's.
     pub seed: Option<String>,
@@ -68,7 +70,10 @@ const TIMER_SETTINGS_FILE: usize = 3;
 /// Long enough for an editor's truncate-then-write to finish.
 const SETTINGS_FILE_SETTLE_MS: u32 = 100;
 const NIN_KEYSELECT: u32 = NIN_SELECT | NINF_KEY;
+const MAIN_CLASS: PCWSTR = w!("BTCTickerMain");
+const OPEN_SETTINGS: PCWSTR = w!("BTCTicker.OpenSettings");
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
+static OPEN_SETTINGS_MESSAGE: AtomicU32 = AtomicU32::new(0);
 
 thread_local! {
     static SHELL: RefCell<Option<Shell>> = const { RefCell::new(None) };
@@ -89,8 +94,28 @@ pub fn deliver(event: Event) {
     });
 }
 
+/// Asks the ticker already running as `instance` to open its Settings window. It may not have created its main
+/// window yet, so this looks for up to 2 s.
+pub fn open_settings_in(instance: &str) {
+    let name = HSTRING::from(instance);
+    for _ in 0..20 {
+        // SAFETY: plain queries and a post to another process's window, with strings that outlive them.
+        unsafe {
+            if let Ok(main) = FindWindowW(MAIN_CLASS, &name) {
+                let mut pid = 0;
+                GetWindowThreadProcessId(main, Some(&mut pid));
+                // Lets the running ticker bring Settings to the front, which Windows allows only if this launch may.
+                let _ = AllowSetForegroundWindow(pid);
+                let _ = PostMessageW(Some(main), RegisterWindowMessageW(OPEN_SETTINGS), WPARAM(0), LPARAM(0));
+                return;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 pub fn run(config: Config) -> Result<()> {
-    let main = create_main_window()?;
+    let main = create_main_window(&config.instance)?;
     let (store, settings) = SettingsStore::open(config.settings_file, config.seed.as_deref());
     store.watch(main, WM_SETTINGS_FILE);
     let overlay = Overlay::create()?;
@@ -340,13 +365,14 @@ fn foreground_window() -> Option<HWND> {
     }
 }
 
-fn create_main_window() -> Result<HWND> {
-    let class = w!("BTCTickerMain");
-    win::register_class(class, Some(procedure), None);
-    // SAFETY: registers a message name and creates a window that is never shown.
+fn create_main_window(instance: &str) -> Result<HWND> {
+    win::register_class(MAIN_CLASS, Some(procedure), None);
+    // SAFETY: registers message names and creates a window that is never shown.
     unsafe {
         TASKBAR_CREATED.store(RegisterWindowMessageW(w!("TaskbarCreated")), Ordering::Relaxed);
-        CreateWindowExW(WINDOW_EX_STYLE(0), class, w!("BTC Ticker"), WS_OVERLAPPED, 0, 0, 0, 0, None, None, None, None)
+        OPEN_SETTINGS_MESSAGE.store(RegisterWindowMessageW(OPEN_SETTINGS), Ordering::Relaxed);
+        let name = HSTRING::from(instance);
+        CreateWindowExW(WINDOW_EX_STYLE(0), MAIN_CLASS, &name, WS_OVERLAPPED, 0, 0, 0, 0, None, None, None, None)
     }
 }
 
@@ -377,6 +403,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
         WM_SETTINGCHANGE if wparam.0 == SPI_SETWORKAREA.0 as usize => Some(Event::Redraw),
         WM_CLOSE => Some(Event::Command(Command::Quit)),
         _ if message == TASKBAR_CREATED.load(Ordering::Relaxed) => Some(Event::TaskbarCreated),
+        _ if message == OPEN_SETTINGS_MESSAGE.load(Ordering::Relaxed) => Some(Event::Command(Command::Settings)),
         _ => None,
     };
     match event {

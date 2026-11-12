@@ -208,6 +208,7 @@ fn run(report: &mut Report, app: &Path, shots: &Path, pid_file: Option<PathBuf>)
     menu(report, &mut session);
     focus(report, &session);
     settings_window(report, &mut session, shots);
+    second_launch(report, &session, &work);
     quit(report, &mut session);
 
     let killed = if session.ticker.stop() {
@@ -1114,6 +1115,47 @@ fn settings_window(report: &mut Report, session: &mut Session, shots: &Path) {
             !was_locked,
             toggled.as_ref().map_or_else(Clone::clone, |_| "applied".to_string()),
             handed_back.is_some()
+        ),
+    );
+}
+
+/// Starting the app again on the same settings file, as a second click on a desktop shortcut does, must not add a
+/// second ticker. It opens the running one's Settings instead.
+fn second_launch(report: &mut Report, session: &Session, work: &Path) {
+    let pid = session.ticker.pid;
+    let second = std::process::Command::new(&session.ticker.exe)
+        .env_remove("BTCTICKER_SETTINGS")
+        .env("BTCTICKER_SETTINGS_FILE", work.join("BTCTicker").join("settings.json"))
+        .env("BTCTICKER_STATE_FILE", work.join("second-state.json"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    let mut second = match second {
+        Ok(second) => second,
+        Err(error) => return report.line("FAIL", "second-launch", format!("could not start a second copy: {error}")),
+    };
+    let exited = wait_until(5.0, || second.try_wait().ok().flatten());
+    if exited.is_none() {
+        let _ = second.kill();
+        let _ = second.wait();
+    }
+    let settings = wait_until(3.0, || desktop::windows_of(pid, SETTINGS_CLASS).first().copied());
+    let running = desktop::processes_running(&session.ticker.exe);
+    if let Some(window) = settings {
+        desktop::post_close(window);
+    }
+    let closed = wait_until(3.0, || desktop::windows_of(pid, SETTINGS_CLASS).is_empty().then_some(()));
+    report.check(
+        exited.is_some_and(|status| status.success())
+            && running == [pid]
+            && settings.is_some()
+            && closed.is_some(),
+        "second-launch",
+        format!(
+            "a second copy on the same settings file exited within 5 s with {}; still running {running:?} (the first is pid {pid}); the first opened Settings {}; Settings closed again {}",
+            exited.map_or_else(|| "nothing, so it was killed".to_string(), |status| status.to_string()),
+            settings.is_some(),
+            closed.is_some()
         ),
     );
 }
