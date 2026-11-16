@@ -25,12 +25,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
             return
         }
         overlay = OverlayController(model: model, menu: menu, stateFile: environment["BTCTICKER_STATE_FILE"].map { URL(fileURLWithPath: $0) })
-        model.onChange = { [weak self] in self?.overlay.render() }
+        model.onChange = { [weak self] in
+            self?.overlay.render()
+            self?.showTooltip()
+        }
         overlay.render()
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = NSImage(systemSymbolName: "bitcoinsign.circle", accessibilityDescription: "BTC Ticker")
         statusItem.menu = menu
+        showTooltip()
 
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
@@ -51,6 +55,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         }
 
         model.start()
+    }
+
+    /// While the overlay is hidden (onlyWhenWoWActive) this is the only place that says the price is stale and why.
+    private func showTooltip() {
+        guard let button = statusItem?.button, button.toolTip != model.state.tooltip else { return }
+        button.toolTip = model.state.tooltip
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

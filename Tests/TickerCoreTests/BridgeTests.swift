@@ -81,6 +81,24 @@ private func fetches(_ reply: CoreReply) -> [CoreEffect.Fetch] {
         #expect(try app.view(maxBars: 150).chart!.candleCount > count)
     }
 
+    @Test func theTooltipSaysHowOldAStalePriceIsAndWhy() throws {
+        let app = try RustApp(settingsJSON: "{}", frontmost: .wow, now: 1000)
+        #expect(try app.view().tooltip == "BTC Ticker · loading")
+        let first = try #require(fetches(app.send(["type": "tick", "now": 1000])).first)
+        _ = try app.send(["type": "quote_finished", "request": first.request, "now": 1001,
+                          "outcome": ["type": "answered", "status": 200, "body": #"{"result":{"XXBTZUSD":{"c":["80482.4"],"o":"80442"}}}"#]])
+        #expect(try app.view().tooltip == "BTC Ticker · $80,482 · live")
+        let second = try #require(fetches(app.send(["type": "tick", "now": 1006])).first)
+        _ = try app.send(["type": "quote_finished", "request": second.request, "now": 1007,
+                          "outcome": ["type": "answered", "status": 503, "body": "unavailable"]])
+        #expect(try app.view().tooltip == "BTC Ticker · $80,482 · live", "one failed request does not make the price wrong")
+        _ = try app.send(["type": "tick", "now": 1061])
+        let stale = try app.view()
+        #expect(stale.status.name == "stale")
+        #expect(stale.tooltip.hasPrefix("BTC Ticker · $80,482 · stale 1m"))
+        #expect(stale.tooltip.hasSuffix("Kraken answered HTTP 503"))
+    }
+
     @Test func badInputsReturnErrorsAndLeaveTheAppUsable() throws {
         let app = try RustApp(settingsJSON: "{}", frontmost: .other, now: 1000)
         for json in ["{", "null", #"{"type":"tick","now":"later"}"#, #"{"type":"overlay","event":{"type":"zoom","inward":null}}"#] {

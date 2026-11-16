@@ -39,6 +39,7 @@ pub struct View {
     overlay: Overlay,
     status: Status,
     display: Display,
+    tooltip: String,
     load: Option<Load>,
     chart_revision: u64,
     chart_start: Option<f64>,
@@ -151,6 +152,7 @@ impl View {
                     .collect(),
                 dimmed: display.dimmed,
             },
+            tooltip: app.tooltip(),
             load: expanded.map(|(timeframe, load)| Load {
                 name: load.name(),
                 notice: load.notice(timeframe).map(|notice| match notice {

@@ -173,6 +173,7 @@ final class OverlayController {
             targets: view.targets.mapValues { globalFrame($0.offsetBy(dx: origin.x, dy: origin.y)) },
             activations: activations
         )
+        snapshot.tooltip = model.state.tooltip
         snapshot.shortcuts = Self.shortcuts(in: NSApp.mainMenu)
         snapshot.foreignPresses = foreignPresses
         let data = snapshot.json

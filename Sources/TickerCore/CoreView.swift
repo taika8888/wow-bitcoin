@@ -64,6 +64,8 @@ public struct CoreView: Decodable, Sendable {
     private let overlay: Overlay
     public let status: FeedView
     public let display: TickerDisplay
+    /// The menu bar icon's help text: the price, how old it is and why it is not updating.
+    public let tooltip: String
     public let load: CandleLoad?
     public let chartRevision: UInt64
     public let chartStart: Date?
