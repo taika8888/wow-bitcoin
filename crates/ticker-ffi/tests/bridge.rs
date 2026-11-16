@@ -64,6 +64,7 @@ fn request_ids_effects_and_duplicate_results_cross_the_abi() {
     let view = app.view(0);
     assert_eq!(view["status"], json!({"name": "live", "fetchedAt": 1001.0}));
     assert_eq!(view["display"]["segments"][0]["text"], "BTC $80,482");
+    assert_eq!(view["tooltip"], "BTC Ticker · $80,482 · live");
     assert_eq!(app.send(result)["effects"], json!([]));
     assert_eq!(
         app.send(json!({"type": "overlay", "event": {"type": "toggle_lock"}}))["effects"][0]["type"],

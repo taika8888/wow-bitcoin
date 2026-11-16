@@ -10,6 +10,7 @@ final class AppModel {
     @ObservationIgnored private let core: RustApp
     @ObservationIgnored private let store: SettingsStore
     @ObservationIgnored private let session = URLSession(configuration: .ephemeral)
+    @ObservationIgnored private var clock = ShellClock()
     @ObservationIgnored private var heartbeat: Timer?
     @ObservationIgnored private var wakeTimer: Timer?
     @ObservationIgnored private var wakeAt: Double?
@@ -28,7 +29,7 @@ final class AppModel {
 
     init(store: SettingsStore, frontmost: Frontmost) throws {
         self.store = store
-        core = try RustApp(settingsJSON: store.json, frontmost: frontmost, now: Date().timeIntervalSince1970)
+        core = try RustApp(settingsJSON: store.json, frontmost: frontmost, now: clock.now())
         state = try core.view()
         store.onExternalChange = { [weak self] json in self?.settingsChanged(json) }
     }
@@ -55,7 +56,7 @@ final class AppModel {
 
     private func timedInput(_ kind: String) {
         // The heartbeat carries only a clock; avoid bridging an NSDictionary on every wake.
-        drive(try core.send(json: "{\"type\":\"\(kind)\",\"now\":\(Date().timeIntervalSince1970)}"))
+        drive(try core.send(json: "{\"type\":\"\(kind)\",\"now\":\(clock.now())}"))
     }
 
     private func drive(_ result: @autoclosure () throws -> CoreReply) {
@@ -82,7 +83,8 @@ final class AppModel {
         wakeTimer = nil
         wakeAt = next
         guard let next else { return }
-        let timer = Timer(fire: Date(timeIntervalSince1970: next), interval: 0, repeats: false) { [weak self] _ in
+        // `next` is on the shell clock, which runs ahead of the wall clock after the wall clock is set back.
+        let timer = Timer(timeInterval: max(0, next - clock.now()), repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.wakeAt = nil
                 self?.tick()
@@ -96,15 +98,24 @@ final class AppModel {
         Task {
             let request = URLRequest(url: fetch.url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: fetch.timeout)
             let outcome: [String: Any]
+            // timeoutInterval limits only the time between bytes. The core's budget is for the whole request, so one
+            // slow request never reaches the stale threshold.
+            let session = session
+            let fetching = Task { try await session.data(for: request) }
+            let deadline = Task {
+                try await Task.sleep(for: .seconds(fetch.timeout))
+                fetching.cancel()
+            }
+            defer { deadline.cancel() }
             do {
-                let (body, response) = try await session.data(for: request)
+                let (body, response) = try await fetching.value
                 outcome = ["type": "answered", "status": (response as? HTTPURLResponse)?.statusCode ?? 0,
                            "body": String(data: body, encoding: .utf8) ?? ""]
             } catch {
                 outcome = ["type": "unreachable"]
             }
             var input: [String: Any] = ["type": fetch.timeframe == nil ? "quote_finished" : "candles_finished",
-                                       "request": fetch.request, "outcome": outcome, "now": Date().timeIntervalSince1970]
+                                       "request": fetch.request, "outcome": outcome, "now": clock.now()]
             if let timeframe = fetch.timeframe { input["timeframe"] = timeframe.rawValue }
             drive(try core.send(input))
         }

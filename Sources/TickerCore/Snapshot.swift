@@ -18,6 +18,8 @@ public struct Snapshot: Codable, Hashable, Sendable {
     }
 
     public var text: String
+    /// The menu bar icon's help text.
+    public var tooltip = ""
     public var feed: String
     /// When the quote on screen was fetched, in seconds since 1970.
     public var fetchedAt: Double?
