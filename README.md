@@ -164,7 +164,7 @@ cargo build --release
 - The app bundle, checked with `plutil -lint` and `codesign --verify`.
 - End-to-end checks against the built app with a live Kraken feed. They check that the window sits on a higher layer than the WoW window, that WoW stays frontmost, that every timeframe loads its candles, that scrolling zooms out to every candle and back, and that the panel catches clicks even at opacity 0. They also save screenshots to `build/expanded-*.png`.
 
-The end-to-end clicks and scrolls are synthesized `NSEvent`s sent through the panel, not real mouse input, and the check's name says so. Real input needs Accessibility permission for the terminal that runs the script. The `e2e-above-wow` check needs a WoW window under the ticker.
+The end-to-end clicks and scrolls are synthesized `NSEvent`s sent through the panel, not real mouse input, and the check's name says so. Real input needs Accessibility permission for the terminal that runs the script. When WoW is not running, the check stands in for it with a small dark window in the top-right corner under the ticker, from a throwaway app with WoW's bundle identifier (`scripts/e2e-standin.swift`). It never takes focus, and the check unregisters it from LaunchServices before and after each run.
 
 ### Windows: `windows\scripts\verify.ps1`
 

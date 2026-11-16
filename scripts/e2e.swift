@@ -186,6 +186,60 @@ func writeSettings(_ json: String) {
 
 try? FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
 run("/usr/bin/defaults", ["delete", suite])
+
+/// Without the game running, a stand-in with its bundle identifier takes its place (scripts/e2e-standin.swift). Launching
+/// it registers it with LaunchServices under the game's identifier, so it lives at one fixed path that every run
+/// unregisters before and after, even after a run that was killed partway.
+let lsregister = "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+let standInURL = captureDir.appendingPathComponent("e2e-standin/WoW Stand-in.app")
+
+func forgetStandIn() {
+    guard FileManager.default.fileExists(atPath: standInURL.path) else { return }
+    run(lsregister, ["-u", standInURL.path])
+    try? FileManager.default.removeItem(at: standInURL.deletingLastPathComponent())
+}
+
+/// Covers the expanded chart's spot in the top-right corner, so the overlay sits over the stand-in in both modes.
+func launchStandIn() -> Process? {
+    let executable = standInURL.appendingPathComponent("Contents/MacOS/standin")
+    let source = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).appendingPathComponent("scripts/e2e-standin.swift")
+    try? FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
+    run("/usr/bin/xcrun", ["swiftc", "-O", source.path, "-o", executable.path])
+    let plist: [String: Any] = ["CFBundleIdentifier": wowBundleID, "CFBundleExecutable": "standin",
+                                "CFBundleName": "WoW Stand-in", "CFBundlePackageType": "APPL", "LSBackgroundOnly": true]
+    guard FileManager.default.isExecutableFile(atPath: executable.path),
+          (plist as NSDictionary).write(to: standInURL.appendingPathComponent("Contents/Info.plist"), atomically: true)
+    else {
+        print("note: could not build the stand-in game from \(source.path)")
+        return nil
+    }
+    let process = Process()
+    process.executableURL = executable
+    process.arguments = ["480", "300"]
+    guard (try? process.run()) != nil,
+          waitFor(10, { onScreenWindows().contains { $0.pid == process.processIdentifier && $0.bounds.width > 100 } ? true : nil }) != nil
+    else {
+        print("note: the stand-in game did not show its window within 10s")
+        if process.isRunning {
+            process.terminate()
+            process.waitUntilExit()
+        }
+        return nil
+    }
+    return process
+}
+
+forgetStandIn()
+let standIn = NSRunningApplication.runningApplications(withBundleIdentifier: wowBundleID).isEmpty ? launchStandIn() : nil
+let game = standIn == nil ? "WoW" : "the stand-in WoW"
+
+func stopStandIn() {
+    if let standIn, standIn.isRunning {
+        standIn.terminate()
+        standIn.waitUntilExit()
+    }
+    forgetStandIn()
+}
 let frontBefore = frontmostBundleID()
 let tickerBundleID = Bundle(url: appURL)?.bundleIdentifier ?? "dev.local.btcticker"
 
@@ -199,6 +253,7 @@ do {
     try app.run()
 } catch {
     report("FAIL", "launch", "could not start \(app.executableURL!.path): \(error)")
+    stopStandIn()
     exit(1)
 }
 try? String(app.processIdentifier).write(to: pidFile, atomically: true, encoding: .utf8)
@@ -258,7 +313,7 @@ if !wowPIDs.isEmpty {
     let gameWindows = windows.filter { wowPIDs.contains($0.pid) && $0.bounds.width > 100 && $0.bounds.height > 100 }
     let covered = ours.map { overlay in gameWindows.filter { $0.bounds.intersects(overlay.bounds) } } ?? []
     if let ours, !covered.isEmpty {
-        let detail = "overlay index \(ours.index) layer \(ours.layer) \(describe(ours.bounds)); WoW windows it overlaps: "
+        let detail = "overlay index \(ours.index) layer \(ours.layer) \(describe(ours.bounds)); \(game) windows it overlaps: "
             + covered.map { "pid \($0.pid) index \($0.index) layer \($0.layer) \(describe($0.bounds))" }.joined(separator: ", ")
         // A higher layer, not just an earlier index, is what keeps the overlay on top after WoW is clicked and reordered.
         let onTop = covered.allSatisfy { ours.index < $0.index && ours.layer > $0.layer }
@@ -266,10 +321,10 @@ if !wowPIDs.isEmpty {
     } else if ours == nil {
         report("FAIL", "above-wow", "overlay window not on screen")
     } else {
-        report("INCONCLUSIVE", "above-wow", "WoW pids \(wowPIDs.sorted()) have no on-screen window under the overlay (minimized, hidden, windowed elsewhere, or on another Space)")
+        report("INCONCLUSIVE", "above-wow", "\(game) pids \(wowPIDs.sorted()) have no on-screen window under the overlay (minimized, hidden, windowed elsewhere, or on another Space)")
     }
 } else {
-    report("INCONCLUSIVE", "above-wow", "World of Warcraft is not running, so the ordering against it was not observed")
+    report("INCONCLUSIVE", "above-wow", "neither World of Warcraft nor its stand-in is running, so the ordering against it was not observed")
 }
 
 let frontAfterLaunch = frontmostBundleID()
@@ -310,7 +365,7 @@ if let finder, let wowApp {
         announceActivation(of: app.processIdentifier)
         let seen = shown(expected)
         gateOK = gateOK && seen != nil
-        gateSteps.append("\(app.bundleIdentifier ?? "?") activated: \(seen ?? "still visible \(Snapshot.read()?.visible ?? !expected) after 5s")")
+        gateSteps.append("\(app == wowApp ? game : app.bundleIdentifier ?? "?") activated: \(seen ?? "still visible \(Snapshot.read()?.visible ?? !expected) after 5s")")
     }
 }
 let realFront = frontmostBundleID()
@@ -320,7 +375,7 @@ let restored = shown(realShows)
 gateSteps.append("real frontmost \(realFront) re-announced: \(restored ?? "visible should be \(realShows), is \(Snapshot.read()?.visible ?? !realShows)")")
 let gateLabel = "only-when-wow (activation posted inside the app, real frontmost untouched)"
 if finder == nil || wowApp == nil {
-    report("INCONCLUSIVE", gateLabel, "need Finder and World of Warcraft running to announce both; \(gateSteps.joined(separator: "; "))")
+    report("INCONCLUSIVE", gateLabel, "need Finder and World of Warcraft or its stand-in running to announce both; \(gateSteps.joined(separator: "; "))")
 } else {
     report(gateOK && restored != nil ? "PASS" : "FAIL", gateLabel, gateSteps.joined(separator: "; "))
 }
@@ -416,12 +471,16 @@ let hitGrid = (0...6).flatMap { i in (0...4).map { j in (Double(i) / 6, Double(j
 
 /// Asks the window server which window takes events at each point; it skips transparent pixels of a click-through window.
 /// Without a window-server connection of its own (NSApplication.shared) the query answers 0 everywhere.
-func missedHits(_ snapshot: Snapshot) -> [CGPoint] {
+func missedHits(_ snapshot: Snapshot) -> [String] {
     NSApplication.shared.setActivationPolicy(.prohibited)
     let primaryHeight = CGDisplayBounds(CGMainDisplayID()).height
     let area = snapshot.frame.insetBy(dx: 1, dy: 1)
-    return hitGrid.map { CGPoint(x: area.minX + area.width * $0.0, y: area.minY + area.height * $0.1) }.filter { point in
-        NSWindow.windowNumber(at: NSPoint(x: point.x, y: primaryHeight - point.y), belowWindowWithWindowNumber: 0) != snapshot.windowNumber
+    let owners = Dictionary((CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []).compactMap { window in
+        (window[kCGWindowNumber as String] as? Int).map { ($0, "\(window[kCGWindowOwnerName as String] as? String ?? "?") layer \(window[kCGWindowLayer as String] as? Int ?? 0)") }
+    }, uniquingKeysWith: { first, _ in first })
+    return hitGrid.map { CGPoint(x: area.minX + area.width * $0.0, y: area.minY + area.height * $0.1) }.compactMap { point in
+        let hit = NSWindow.windowNumber(at: NSPoint(x: point.x, y: primaryHeight - point.y), belowWindowWithWindowNumber: 0)
+        return hit == snapshot.windowNumber ? nil : "(\(Int(point.x)),\(Int(point.y))) hit window \(hit) \(owners[hit] ?? "not on screen")"
     }
 }
 
@@ -611,4 +670,5 @@ if exited {
 
 run("/usr/bin/defaults", ["delete", suite])
 try? FileManager.default.removeItem(at: workDir)
+stopStandIn()
 exit(failures == 0 ? 0 : 1)

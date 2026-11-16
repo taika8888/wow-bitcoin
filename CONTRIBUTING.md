@@ -24,7 +24,7 @@ swift test
 ./scripts/bundle.sh              # builds "build/BTC Ticker.app"
 ```
 
-`./scripts/verify.sh` is the exit condition of the macOS verify loop. It runs a release build with warnings as errors, the unit tests, the bundle checks and an end-to-end check against the built app with a live Kraken feed. It prints one PASS, FAIL or INCONCLUSIVE line per check and exits 0 only when every line is PASS. The `e2e-above-wow` check needs a WoW window under the ticker. The [README](README.md#macos-scriptsverifysh) lists every check.
+`./scripts/verify.sh` is the exit condition of the macOS verify loop. It runs a release build with warnings as errors, the unit tests, the bundle checks and an end-to-end check against the built app with a live Kraken feed. It prints one PASS, FAIL or INCONCLUSIVE line per check and exits 0 only when every line is PASS. Without WoW running, the WoW checks use a stand-in game window. The [README](README.md#macos-scriptsverifysh) lists every check.
 
 ## Build and test the Windows app
 
