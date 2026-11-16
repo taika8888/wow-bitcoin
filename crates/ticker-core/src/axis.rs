@@ -13,6 +13,7 @@ pub struct Tick<T> {
 
 const MINUTE: f64 = 60.0;
 const DAY: f64 = 86_400.0;
+const MAXIMUM_TICKS: u32 = 1024;
 const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 impl CandleChart {
@@ -58,7 +59,7 @@ impl CandleChart {
 /// The coarsest step that still leaves `MINIMUM_TICKS` in the range, or the finest step when none does.
 fn step(range: &RangeInclusive<f64>, steps: &[f64]) -> Option<f64> {
     let span = range.end() - range.start();
-    if span <= 0.0 {
+    if span <= 0.0 || !span.is_finite() {
         return None;
     }
     steps.iter().rev().find(|step| span / **step >= CandleChart::MINIMUM_TICKS).or(steps.first()).copied()
@@ -66,10 +67,14 @@ fn step(range: &RangeInclusive<f64>, steps: &[f64]) -> Option<f64> {
 
 /// Every multiple of the step inside the range, with multiples counted from `-offset` rather than zero. Each tick is
 /// `first + index * step` rounded once, as Swift's floating-point `stride` computes it with `addingProduct`, so an end
-/// tick the Mac draws is never lost to a second rounding.
+/// tick the Mac draws is never lost to a second rounding. A domain from a malformed Kraken timestamp, such as one
+/// 30-day step against a span of centuries, stops at `MAXIMUM_TICKS` instead of allocating without bound.
 fn ticks(range: &RangeInclusive<f64>, step: f64, offset: f64) -> Vec<f64> {
     let first = ((range.start() + offset) / step).ceil() * step - offset;
-    (0..).map(|index| f64::from(index).mul_add(step, first)).take_while(|tick| tick <= range.end()).collect()
+    (0..MAXIMUM_TICKS)
+        .map(|index| f64::from(index).mul_add(step, first))
+        .take_while(|tick| tick <= range.end())
+        .collect()
 }
 
 fn clock(local: f64, hour12: bool) -> String {

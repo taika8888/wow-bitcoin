@@ -73,7 +73,7 @@ Set WoW's display mode to **Windowed** or **Windowed (Fullscreen)**. In exclusiv
 - Scroll, turn the mouse wheel or pinch over the open chart to zoom. The game keeps the keyboard and the focus, and it doesn't get the wheel while the pointer is over the chart. On Windows, this holds even with the "Scroll inactive windows when I hover over them" setting turned off.
 - While the position is unlocked, drag the ticker to move it. On Windows, you can also drag the open chart, and drag its corner grip, opposite the ticker, to resize it. The new size is saved when you release the mouse.
 - **Lock Position** stops dragging and resizing. Clicks still open the chart.
-- When the price stops updating, the ticker dims it and marks it stale. On Windows, the mark also says how old the price is, for example `stale 3m`. Hover over the tray icon to see the price, whether it is live, and why it is not updating, for example `Kraken is not answering`. The tooltip works while the ticker is hidden too.
+- When the price stops updating, the ticker dims it and marks it stale with its age, for example `stale 3m`. On Windows, hover over the tray icon to see the price, whether it is live, and why it is not updating, for example `Kraken is not answering`. The tooltip works while the ticker is hidden too.
 
 The **Settings** window has these options:
 
@@ -131,14 +131,16 @@ Prices are for information only. They can be delayed or wrong, and nothing in th
 
 ### macOS
 
-Swift 6.1 from the Xcode Command Line Tools is enough. The app runs on macOS 14 or later.
+You need Swift 6.1 from the Xcode Command Line Tools and Rust 1.98 or later. The app runs on macOS 14 or later. The windows and drawing are Swift. The feed, the chart data, settings and every click and drag decision come from the same `crates/ticker-core` crate as the Windows app, linked in as a static library from `crates/ticker-ffi`.
 
 ```sh
 ./scripts/bundle.sh              # builds "build/BTC Ticker.app"
 open "build/BTC Ticker.app"
 ```
 
-That builds for your Mac's own processor. To build one app for both Apple silicon and Intel, as the releases are, run `UNIVERSAL=1 ./scripts/bundle.sh`. That needs the full Xcode, not only the Command Line Tools.
+That builds for your Mac's own processor. To build one app for both Apple silicon and Intel, as the releases are, run `UNIVERSAL=1 ./scripts/bundle.sh`. That needs the full Xcode and both Rust targets: `rustup target add aarch64-apple-darwin x86_64-apple-darwin`.
+
+For development, `./scripts/build.sh` and `./scripts/test.sh` take the same arguments as `swift build` and `swift test`, and build the Rust library first. A plain `swift build` fails on a fresh checkout until `./scripts/build-rust.sh` has run, and it misses Rust changes until it runs again.
 
 ### Windows
 
@@ -158,7 +160,7 @@ cargo build --release
 `./scripts/verify.sh` prints one PASS, FAIL or INCONCLUSIVE line per check and exits 0 only when every line is PASS.
 
 - A release build with warnings treated as errors.
-- Unit tests over the pure `TickerCore` library, run against Kraken responses recorded in `Tests/TickerCoreTests`. One of them is an exhaustive model check. It walks every state the overlay reducer can reach under every event and asserts the invariants in each one. For example, a click never moves the ticker, and a locked ticker never drags.
+- Swift tests of the bridge to the Rust core, run against Kraken responses recorded in `Tests/TickerCoreTests`, plus saved-settings compatibility and window layout. The core's own tests and model checks run with `cargo test -p ticker-core -p ticker-ffi`. A model check walks every state the overlay reducer can reach under every event and asserts the invariants in each one. For example, a click never moves the ticker, and a locked ticker never drags.
 - The app bundle, checked with `plutil -lint` and `codesign --verify`.
 - End-to-end checks against the built app with a live Kraken feed. They check that the window sits on a higher layer than the WoW window, that WoW stays frontmost, that every timeframe loads its candles, that scrolling zooms out to every candle and back, and that the panel catches clicks even at opacity 0. They also save screenshots to `build/expanded-*.png`.
 

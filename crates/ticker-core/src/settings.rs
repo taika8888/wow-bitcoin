@@ -30,9 +30,8 @@ impl Rgba {
     }
 }
 
-/// Where the ticker line's top-left corner sits, in virtual-screen physical pixels with a top-left origin and y growing
-/// down. The Windows settings file is not interchangeable with the macOS app's, whose positions are AppKit points
-/// measured from the bottom left.
+/// A saved ticker origin in the shell's coordinates. Windows uses top-left physical pixels;
+/// macOS uses bottom-left AppKit points. Each shell keeps its own settings store.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct ScreenPoint {
     pub x: f64,
@@ -170,9 +169,13 @@ impl Settings {
     }
 }
 
-/// A JSON integer; 1.5 or "2" is mistyped.
+/// Match Swift Int decoding: integral JSON numbers (including 2.0 and 2e1), within signed 64-bit bounds.
 fn integer(value: &Value) -> Option<i128> {
-    value.as_i64().map(i128::from).or_else(|| value.as_u64().map(i128::from))
+    if let Some(value) = value.as_i64() {
+        return Some(i128::from(value));
+    }
+    let number = value.as_f64()?;
+    (number.fract() == 0.0 && number > i64::MIN as f64 && number < -(i64::MIN as f64)).then_some(number as i128)
 }
 
 fn saturate<T: Copy + TryFrom<i128> + Into<i128>>(value: i128, range: RangeInclusive<T>) -> T {

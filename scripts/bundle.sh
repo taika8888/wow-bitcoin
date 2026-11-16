@@ -4,10 +4,12 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # UNIVERSAL=1 builds one binary for Apple silicon and Intel, which needs Xcode, not only the Command Line Tools.
+# build-rust.sh reads UNIVERSAL too and builds the Rust core for the same architectures.
 arch=()
 if [[ "${UNIVERSAL:-0}" == 1 ]]; then
 	arch=(--arch arm64 --arch x86_64)
 fi
+scripts/build-rust.sh
 # The ${arch[@]+...} form keeps an empty array from tripping set -u in macOS's bash 3.2.
 swift build -c release ${arch[@]+"${arch[@]}"} -Xswiftc -warnings-as-errors
 bin="$(swift build -c release ${arch[@]+"${arch[@]}"} --show-bin-path)"

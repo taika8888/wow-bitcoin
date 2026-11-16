@@ -17,14 +17,14 @@ show_log() {
 	tail -n 25 "$1" | sed 's/^/    | /'
 }
 
-if swift build -c release -Xswiftc -warnings-as-errors >"$logs/build.log" 2>&1; then
+if scripts/build.sh -c release -Xswiftc -warnings-as-errors >"$logs/build.log" 2>&1; then
 	report PASS build "release, warnings as errors"
 else
 	report FAIL build "$logs/build.log"
 	show_log "$logs/build.log"
 fi
 
-if swift test >"$logs/test.log" 2>&1; then
+if scripts/test.sh >"$logs/test.log" 2>&1; then
 	report PASS test "$(grep -Eo 'Test run with [0-9]+ tests? passed' "$logs/test.log" | tail -1)"
 else
 	report FAIL test "$logs/test.log"

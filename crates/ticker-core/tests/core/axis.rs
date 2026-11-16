@@ -77,6 +77,15 @@ fn a_chart_with_no_span_has_no_ticks() {
 }
 
 #[test]
+fn a_malformed_domain_gets_a_bounded_number_of_ticks() {
+    assert_eq!(spanning(0.0, 1e12).time_ticks(0, false).len(), 1024);
+    assert_eq!(spanning(NOV_3_1400_UTC, f64::INFINITY).time_ticks(0, false), []);
+    let mut chart = spanning(0.0, 1.0);
+    chart.price_domain = 0.0..=f64::INFINITY;
+    assert_eq!(chart.price_ticks(), []);
+}
+
+#[test]
 fn the_price_step_is_the_coarsest_one_two_or_five_that_leaves_three_ticks() {
     let twelve = priced(0.0, 12.0).price_ticks();
     assert_eq!(twelve.iter().map(|tick| tick.value).collect::<Vec<_>>(), [0.0, 2.0, 4.0, 6.0, 8.0, 10.0, 12.0]);
