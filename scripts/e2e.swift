@@ -206,7 +206,7 @@ func launchStandIn() -> Process? {
     try? FileManager.default.createDirectory(at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
     run("/usr/bin/xcrun", ["swiftc", "-O", source.path, "-o", executable.path])
     let plist: [String: Any] = ["CFBundleIdentifier": wowBundleID, "CFBundleExecutable": "standin",
-                                "CFBundleName": "WoW Stand-in", "CFBundlePackageType": "APPL", "LSUIElement": true]
+                                "CFBundleName": "WoW Stand-in", "CFBundlePackageType": "APPL", "LSBackgroundOnly": true]
     guard FileManager.default.isExecutableFile(atPath: executable.path),
           (plist as NSDictionary).write(to: standInURL.appendingPathComponent("Contents/Info.plist"), atomically: true)
     else {
@@ -471,12 +471,16 @@ let hitGrid = (0...6).flatMap { i in (0...4).map { j in (Double(i) / 6, Double(j
 
 /// Asks the window server which window takes events at each point; it skips transparent pixels of a click-through window.
 /// Without a window-server connection of its own (NSApplication.shared) the query answers 0 everywhere.
-func missedHits(_ snapshot: Snapshot) -> [CGPoint] {
+func missedHits(_ snapshot: Snapshot) -> [String] {
     NSApplication.shared.setActivationPolicy(.prohibited)
     let primaryHeight = CGDisplayBounds(CGMainDisplayID()).height
     let area = snapshot.frame.insetBy(dx: 1, dy: 1)
-    return hitGrid.map { CGPoint(x: area.minX + area.width * $0.0, y: area.minY + area.height * $0.1) }.filter { point in
-        NSWindow.windowNumber(at: NSPoint(x: point.x, y: primaryHeight - point.y), belowWindowWithWindowNumber: 0) != snapshot.windowNumber
+    let owners = Dictionary((CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []).compactMap { window in
+        (window[kCGWindowNumber as String] as? Int).map { ($0, "\(window[kCGWindowOwnerName as String] as? String ?? "?") layer \(window[kCGWindowLayer as String] as? Int ?? 0)") }
+    }, uniquingKeysWith: { first, _ in first })
+    return hitGrid.map { CGPoint(x: area.minX + area.width * $0.0, y: area.minY + area.height * $0.1) }.compactMap { point in
+        let hit = NSWindow.windowNumber(at: NSPoint(x: point.x, y: primaryHeight - point.y), belowWindowWithWindowNumber: 0)
+        return hit == snapshot.windowNumber ? nil : "(\(Int(point.x)),\(Int(point.y))) hit window \(hit) \(owners[hit] ?? "not on screen")"
     }
 }
 
