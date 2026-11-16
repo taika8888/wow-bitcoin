@@ -18,6 +18,8 @@ final class AppModel {
 
     private struct ChartKey: Equatable {
         let revision: UInt64
+        /// The core moves the newest candle and the last-price line to each newer quote.
+        let quoteFetchedAt: Date?
         let timeframe: Timeframe
         let zoom: Zoom
         let maxBars: Int
@@ -108,11 +110,11 @@ final class AppModel {
         }
     }
 
-    /// Quotes and heartbeat renders reuse the decoded bars; only candles, zoom, timeframe, budget or timezone invalidate them.
+    /// Heartbeat renders reuse the decoded bars; only candles, a newer quote, zoom, timeframe, budget or timezone invalidate them.
     func chart(maxBars: Int) -> CandleChart? {
         let offset = TimeZone.current.secondsFromGMT(for: state.chartStart ?? .now)
-        let key = ChartKey(revision: state.chartRevision, timeframe: state.settings.timeframe,
-                           zoom: state.settings.zoom, maxBars: maxBars, utcOffset: offset)
+        let key = ChartKey(revision: state.chartRevision, quoteFetchedAt: state.status.fetchedAt,
+                           timeframe: state.settings.timeframe, zoom: state.settings.zoom, maxBars: maxBars, utcOffset: offset)
         guard key != chartKey else { return cachedChart }
         do {
             var chart = try core.view(maxBars: maxBars, utcOffset: offset).chart
