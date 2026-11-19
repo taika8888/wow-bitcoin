@@ -3,7 +3,7 @@ use std::ops::RangeInclusive;
 use serde::{Deserialize as _, Serialize};
 use serde_json::{Map, Value};
 
-use crate::market::{Timeframe, Zoom};
+use crate::market::{Market, Timeframe, Zoom};
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub struct Rgba {
@@ -47,6 +47,8 @@ impl ScreenPoint {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
+    /// What the ticker and the chart show.
+    pub market: Market,
     pub font_size: f64,
     pub opacity: f64,
     pub text_color: Rgba,
@@ -72,6 +74,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
+            market: Market::Btc,
             font_size: 15.0,
             opacity: 0.55,
             text_color: Rgba::new(1.0, 1.0, 1.0, 1.0),
@@ -115,6 +118,7 @@ impl Settings {
         let flag = |key: &str, fallback: bool| map.get(key).and_then(Value::as_bool).unwrap_or(fallback);
         let color = |key: &str, fallback: Rgba| map.get(key).and_then(Rgba::parse).unwrap_or(fallback);
         Settings {
+            market: map.get("market").and_then(|value| Market::deserialize(value).ok()).unwrap_or(defaults.market),
             font_size: number("fontSize", defaults.font_size),
             opacity: number("opacity", defaults.opacity),
             text_color: color("textColor", defaults.text_color),

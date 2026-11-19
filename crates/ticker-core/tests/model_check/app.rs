@@ -1,10 +1,11 @@
 //! Every interleaving of the inputs the shell can send, up to a depth bound, through the real `App::handle`.
 //!
 //! Time is abstracted to a few advances: ticks of 1, 4 and 16 s and a wake 1 s later. Results arrive at the clock's
-//! current time. Every quote answer carries the same price, so quotes differ only by when they were fetched.
+//! current time. Every quote answer for one market carries the same price, so quotes of a market differ only by when
+//! they were fetched, and the two markets' prices and candles differ, so the checker can tell whose are on screen.
 
 use ticker_core::{
-    App, DragPhase, Effect, FeedSchedule, FeedStatus, Frontmost, HttpOutcome, Input, OverlayEvent, OverlayMode,
+    App, DragPhase, Effect, FeedSchedule, FeedStatus, Frontmost, HttpOutcome, Input, Market, OverlayEvent, OverlayMode,
     PressTarget, Quote, RequestId, ScreenPoint, Settings, Timeframe, Timestamp, Zoom, ZoomStep,
 };
 
@@ -13,21 +14,39 @@ use crate::words::{overlay_event, settings_words};
 
 const T0: Timestamp = Timestamp::from_unix_seconds(1_793_847_300.0);
 const DROP: ScreenPoint = ScreenPoint { x: 900.0, y: 600.0 };
-const PRICE: f64 = 80500.0;
-const OPEN: f64 = 80000.0;
 const TICKS: [f64; 3] = [1.0, 4.0, 16.0];
 const RETRY_AFTER_CANDLE_FAILURE: f64 = 10.0;
 
+/// The price, the reference price and the candle close every answer for the market carries.
+const fn answers(market: Market) -> (f64, f64, f64) {
+    match market {
+        Market::Btc => (80500.0, 80000.0, 11.0),
+        Market::Ant => (95.75, 83.0, 96.5),
+    }
+}
+
+/// A request the shell is still running for a feed the app replaced on a market switch. The shell answers it anyway.
+#[derive(Clone, Copy, Debug)]
+struct Abandoned {
+    request: RequestId,
+    market: Market,
+    /// None for a quote request.
+    timeframe: Option<Timeframe>,
+}
+
 /// The app plus the checker's own records, kept from the inputs it sent and the effects it saw, never from the app's
 /// internals: which requests are out, what it last delivered, the last good quote, and the quote schedule's anchor.
+/// Every record but `abandoned` and the deliveries is about the current market's feed, which a switch starts over.
 #[derive(Clone, Debug)]
 pub struct World {
     app: App,
     clock: Timestamp,
+    feed_started: Timestamp,
     quotes_out: Vec<RequestId>,
     candles_out: [Vec<RequestId>; 3],
-    delivered_quote: Option<RequestId>,
-    delivered_candles: Option<(Timeframe, RequestId)>,
+    abandoned: Vec<Abandoned>,
+    delivered_quote: Option<(RequestId, Market)>,
+    delivered_candles: Option<(Timeframe, RequestId, Market)>,
     last_good: Option<Quote>,
     quote_started: Option<Timestamp>,
     quote_failures: u32,
@@ -37,7 +56,8 @@ pub struct World {
 
 pub struct Step {
     input: Input,
-    /// A result for a request the checker already delivered: a duplicate or late answer.
+    /// A result for a request the checker already delivered, or one a market switch abandoned: a duplicate or late
+    /// answer.
     late: bool,
 }
 
@@ -53,9 +73,9 @@ struct Transition<'a> {
 
 type Invariant = (&'static str, fn(&Transition) -> bool);
 
-const INVARIANTS: [Invariant; 14] = [
-    ("never two quote requests outstanding", |t| t.after.quotes_out.len() <= 1),
-    ("never two candle requests outstanding for one timeframe", |t| {
+const INVARIANTS: [Invariant; 16] = [
+    ("never two quote requests outstanding for the current market", |t| t.after.quotes_out.len() <= 1),
+    ("never two candle requests outstanding for one timeframe of the current market", |t| {
         t.after.candles_out.iter().all(|out| out.len() <= 1)
     }),
     ("candles are fetched only for the visible expanded timeframe", |t| {
@@ -68,6 +88,25 @@ const INVARIANTS: [Invariant; 14] = [
     }),
     ("the visible expanded chart's candles are requested exactly when due", |t| {
         fetched_candles(t.effects).collect::<Vec<_>>() == Vec::from_iter(t.candles_due)
+    }),
+    ("every request goes to the current market's source", |t| {
+        let source = t.after.app.settings().market.source();
+        t.effects.iter().all(|effect| match effect {
+            Effect::FetchQuote { url, .. } => *url == source.quote_url(),
+            Effect::FetchCandles { url, timeframe, .. } => *url == source.candles_url(*timeframe),
+            Effect::SaveSettings(_) | Effect::Render => true,
+        })
+    }),
+    ("the shown quote and candles always belong to the current market", |t| {
+        let app = &t.after.app;
+        let (price, _, close) = answers(app.settings().market);
+        let quote_matches = app.status().quote().is_none_or(|quote| quote.price == price);
+        let candles_match = Timeframe::ALL.iter().all(|timeframe| {
+            app.chart_load(*timeframe)
+                .series()
+                .is_none_or(|series| series.candles.iter().all(|candle| candle.close == close))
+        });
+        quote_matches && candles_match
     }),
     ("a late or unknown result changes nothing", |t| {
         !t.step.late || (t.after.app == t.before.app && t.effects.is_empty())
@@ -103,9 +142,10 @@ const INVARIANTS: [Invariant; 14] = [
             saved.is_empty()
         }
     }),
-    ("the feed status is FeedStatus::derive of the last good quote, the start and the clock", |t| {
+    ("the feed status is FeedStatus::derive of the last good quote, the feed's start and the clock", |t| {
         let refresh = f64::from(t.after.app.settings().refresh_seconds);
-        t.after.app.status() == FeedStatus::derive(t.after.last_good.as_ref(), T0, t.after.clock, refresh)
+        t.after.app.status()
+            == FeedStatus::derive(t.after.last_good.as_ref(), t.after.feed_started, t.after.clock, refresh)
     }),
     ("Render is emitted iff the overlay, the feed status, the shown text or a chart load changed", |t| {
         let (before, after) = (&t.before.app, &t.after.app);
@@ -147,10 +187,21 @@ fn index(timeframe: Timeframe) -> usize {
     Timeframe::ALL.iter().position(|candidate| *candidate == timeframe).unwrap_or_default()
 }
 
-/// When the checker's own record of the schedule says the next quote may start: the first one at once.
+fn other(market: Market) -> Market {
+    match market {
+        Market::Btc => Market::Ant,
+        Market::Ant => Market::Btc,
+    }
+}
+
+/// When the checker's own record of the schedule says the next quote may start: the first one of a feed at once.
 fn next_quote_due(world: &World) -> Option<Timestamp> {
     let refresh = world.app.settings().refresh_seconds;
-    Some(world.quote_started.map_or(T0, |start| start.plus(FeedSchedule::delay(refresh, world.quote_failures))))
+    Some(
+        world
+            .quote_started
+            .map_or(world.feed_started, |start| start.plus(FeedSchedule::delay(refresh, world.quote_failures))),
+    )
 }
 
 fn candles_due(world: &World) -> Option<Timeframe> {
@@ -167,18 +218,39 @@ fn candles_due(world: &World) -> Option<Timeframe> {
     due.then_some(timeframe)
 }
 
-fn quote_body() -> HttpOutcome {
-    let body = format!(r#"{{"error":[],"result":{{"XXBTZUSD":{{"c":["{PRICE}","0.1"],"o":"{OPEN}"}}}}}}"#);
+fn answered(body: String) -> HttpOutcome {
     HttpOutcome::Answered { status: 200, body: body.into_bytes() }
 }
 
-fn candles_body() -> HttpOutcome {
-    let body = r#"{"error":[],"result":{"XXBTZUSD":[[1793847240,"10","12","9","11","10.5","1.0",3]],"last":1}}"#;
-    HttpOutcome::Answered { status: 200, body: body.as_bytes().to_vec() }
+/// What the market's source answers to a quote request.
+fn quote_body(market: Market) -> HttpOutcome {
+    let (price, reference, _) = answers(market);
+    answered(match market {
+        Market::Btc => format!(r#"{{"error":[],"result":{{"XXBTZUSD":{{"c":["{price}","0.1"],"o":"{reference}"}}}}}}"#),
+        Market::Ant => format!(
+            r#"{{"chart":{{"result":[{{"meta":{{"regularMarketPrice":{price},"chartPreviousClose":{reference}}}}}],"error":null}}}}"#
+        ),
+    })
+}
+
+/// What the market's source answers to a candle request: one candle.
+fn candles_body(market: Market) -> HttpOutcome {
+    let (_, _, close) = answers(market);
+    answered(match market {
+        Market::Btc => {
+            format!(
+                r#"{{"error":[],"result":{{"XXBTZUSD":[[1793847240,"10","12","9","{close}","10.5","1.0",3]],"last":1}}}}"#
+            )
+        }
+        Market::Ant => format!(
+            r#"{{"chart":{{"result":[{{"timestamp":[1793847240],"indicators":{{"quote":[{{"open":[95],"high":[97],"low":[94],"close":[{close}]}}]}}}}],"error":null}}}}"#
+        ),
+    })
 }
 
 /// Which inputs the model sends. `Full` is every kind the brief names; `Feed` drops the pointer details that the
-/// reducer's own exhaustive check already covers, so it can go deeper into fetch and schedule interleavings.
+/// reducer's own exhaustive check already covers, and the market switch, which starts the feed over and so adds no
+/// deeper fetch history, so it can go deeper into fetch and schedule interleavings.
 #[derive(Clone, Copy, PartialEq)]
 enum Alphabet {
     Full,
@@ -204,6 +276,7 @@ impl AppModel {
                 OverlayEvent::Zoom(ZoomStep::In),
                 OverlayEvent::Zoom(ZoomStep::Out),
                 OverlayEvent::AppActivated(Frontmost::Ticker),
+                OverlayEvent::SettingsEdited(Settings { market: other(settings.market), ..*settings }),
             ]);
         }
         events.extend([Frontmost::Wow, Frontmost::Other].map(OverlayEvent::AppActivated));
@@ -227,8 +300,10 @@ impl Model for AppModel {
         vec![World {
             app: App::new(Settings::default(), Frontmost::Wow, T0),
             clock: T0,
+            feed_started: T0,
             quotes_out: Vec::new(),
             candles_out: Default::default(),
+            abandoned: Vec::new(),
             delivered_quote: None,
             delivered_candles: None,
             last_good: None,
@@ -240,7 +315,9 @@ impl Model for AppModel {
 
     fn steps(&self, world: &World) -> Vec<Step> {
         let fresh = |input| Step { input, late: false };
+        let late = |input| Step { input, late: true };
         let settings = world.app.settings();
+        let market = settings.market;
         let mut steps: Vec<Step> =
             self.overlay_events(settings).into_iter().map(|event| fresh(Input::Overlay(event))).collect();
         steps.extend(TICKS.map(|seconds| fresh(Input::Tick(world.clock.plus(seconds)))));
@@ -250,31 +327,39 @@ impl Model for AppModel {
             timeframe: Timeframe::H4,
             ..*settings
         })));
+        if self.alphabet == Alphabet::Full {
+            steps.push(fresh(Input::SettingsChanged(Settings { market: other(market), ..*settings })));
+        }
         let now = world.clock;
         for &request in &world.quotes_out {
-            for outcome in [quote_body(), HttpOutcome::Unreachable] {
+            for outcome in [quote_body(market), HttpOutcome::Unreachable] {
                 steps.push(fresh(Input::QuoteFinished { request, outcome, now }));
             }
         }
-        if let Some(request) = world.delivered_quote {
-            steps.push(Step { input: Input::QuoteFinished { request, outcome: quote_body(), now }, late: true });
+        if let Some((request, market)) = world.delivered_quote {
+            steps.push(late(Input::QuoteFinished { request, outcome: quote_body(market), now }));
         }
         for timeframe in Timeframe::ALL {
             for &request in &world.candles_out[index(timeframe)] {
-                for outcome in [candles_body(), HttpOutcome::Unreachable] {
+                for outcome in [candles_body(market), HttpOutcome::Unreachable] {
                     steps.push(fresh(Input::CandlesFinished { request, timeframe, outcome, now }));
                 }
             }
         }
-        if let Some((timeframe, request)) = world.delivered_candles {
-            let input = Input::CandlesFinished { request, timeframe, outcome: candles_body(), now };
-            steps.push(Step { input, late: true });
+        if let Some((timeframe, request, market)) = world.delivered_candles {
+            steps.push(late(Input::CandlesFinished { request, timeframe, outcome: candles_body(market), now }));
+        }
+        for &Abandoned { request, market, timeframe } in &world.abandoned {
+            steps.push(late(match timeframe {
+                None => Input::QuoteFinished { request, outcome: quote_body(market), now },
+                Some(timeframe) => Input::CandlesFinished { request, timeframe, outcome: candles_body(market), now },
+            }));
         }
         steps
     }
 
     fn describe(&self, step: &Step) -> String {
-        let late = if step.late { "late duplicate: " } else { "" };
+        let late = if step.late { "late or abandoned: " } else { "" };
         let result = |outcome: &HttpOutcome| if *outcome == HttpOutcome::Unreachable { "fails" } else { "succeeds" };
         let text = match &step.input {
             Input::Overlay(event) => overlay_event(event),
@@ -296,28 +381,49 @@ impl Model for AppModel {
     fn apply(&self, world: &World, step: &Step) -> (World, Vec<&'static str>) {
         let mut after = world.clone();
         let effects = after.app.handle(step.input.clone());
+        let market = world.app.settings().market;
         match &step.input {
             Input::Tick(now) => after.clock = *now,
             Input::Woke(now) => {
                 after.clock = *now;
                 after.quote_failures = 0;
             }
-            Input::QuoteFinished { request, outcome, .. } if !step.late => {
+            Input::QuoteFinished { request, .. } | Input::CandlesFinished { request, .. } if step.late => {
+                after.abandoned.retain(|abandoned| abandoned.request != *request);
+            }
+            Input::QuoteFinished { request, outcome, .. } => {
                 after.quotes_out.retain(|out| out != request);
-                after.delivered_quote = Some(*request);
+                after.delivered_quote = Some((*request, market));
                 if *outcome == HttpOutcome::Unreachable {
                     after.quote_failures += 1;
                 } else {
+                    let (price, reference, _) = answers(market);
                     after.quote_failures = 0;
-                    after.last_good = Some(Quote { price: PRICE, open_24h: OPEN, fetched_at: after.clock });
+                    after.last_good = Some(Quote { price, reference, fetched_at: after.clock });
                 }
             }
-            Input::CandlesFinished { request, timeframe, outcome, .. } if !step.late => {
+            Input::CandlesFinished { request, timeframe, outcome, .. } => {
                 after.candles_out[index(*timeframe)].retain(|out| out != request);
-                after.delivered_candles = Some((*timeframe, *request));
+                after.delivered_candles = Some((*timeframe, *request, market));
                 after.candles_finished[index(*timeframe)] = Some((*outcome != HttpOutcome::Unreachable, after.clock));
             }
             _ => {}
+        }
+        if after.app.settings().market != market {
+            after.abandoned.extend(after.quotes_out.drain(..).map(|request| Abandoned {
+                request,
+                market,
+                timeframe: None,
+            }));
+            for timeframe in Timeframe::ALL {
+                let out = after.candles_out[index(timeframe)].drain(..);
+                after.abandoned.extend(out.map(|request| Abandoned { request, market, timeframe: Some(timeframe) }));
+            }
+            after.feed_started = after.clock;
+            after.last_good = None;
+            after.quote_started = None;
+            after.quote_failures = 0;
+            after.candles_finished = [None; 3];
         }
         let quote_due = after.quotes_out.is_empty() && next_quote_due(&after).is_none_or(|due| after.clock >= due);
         let candles_due = candles_due(&after);
@@ -349,12 +455,17 @@ struct Reached {
     dragging: bool,
     candles_failed: bool,
     zoomed_while_loading: bool,
+    ant_live: bool,
+    ant_candles: bool,
+    switched_with_requests_out: bool,
+    switched_back: bool,
 }
 
 fn check(name: &'static str, alphabet: Alphabet, depth: usize) -> (Report, Reached) {
     let mut reached = Reached::default();
     let report = explore(name, &AppModel { alphabet }, Some(depth), |world: &World| {
         let app = &world.app;
+        let ant = app.settings().market == Market::Ant;
         reached.quote_out_and_hidden |= !world.quotes_out.is_empty() && !app.overlay().is_visible();
         reached.two_timeframes_loading |=
             Timeframe::ALL.iter().filter(|t| app.chart_load(**t).is_loading()).count() >= 2;
@@ -367,6 +478,10 @@ fn check(name: &'static str, alphabet: Alphabet, depth: usize) -> (Report, Reach
         reached.candles_failed |= Timeframe::ALL.iter().any(|t| app.chart_load(*t).failure().is_some());
         reached.zoomed_while_loading |= app.settings().zoom != Zoom::Standard
             && app.expanded().is_some_and(|(_, load)| load.is_loading() || load.series().is_some());
+        reached.ant_live |= ant && matches!(app.status(), FeedStatus::Live(_));
+        reached.ant_candles |= ant && app.expanded().is_some_and(|(_, load)| load.series().is_some());
+        reached.switched_with_requests_out |= world.abandoned.len() >= 2;
+        reached.switched_back |= !ant && world.abandoned.iter().any(|abandoned| abandoned.market == Market::Ant);
     });
     println!("{} ({} invariants)", report.summary(), INVARIANTS.len());
     assert!(report.violations.is_empty(), "{}", report.failures());
@@ -392,6 +507,10 @@ fn every_interleaving_of_every_input_keeps_the_app_invariants() {
         reached.zoomed_while_loading,
         "a zoomed chart with candles out or loaded must be reachable, or zooming is never checked against fetches"
     );
+    assert!(reached.ant_live, "a live ANT quote must be reachable, or the market invariant never sees one");
+    assert!(reached.switched_with_requests_out, "a switch with a quote and candles out must be reachable");
+    assert!(reached.ant_candles, "ANT candles on the chart must be reachable");
+    assert!(reached.switched_back, "switching to ANT and back with an ANT request out must be reachable");
 }
 
 #[test]

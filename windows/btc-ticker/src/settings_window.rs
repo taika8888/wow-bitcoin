@@ -3,7 +3,7 @@
 
 use std::cell::{Cell, RefCell};
 
-use ticker_core::{Rgba, Settings};
+use ticker_core::{Market, Rgba, Settings};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     COLOR_BTNFACE, CreateFontIndirectW, CreateSolidBrush, DeleteObject, GetMonitorInfoW, HBRUSH, HFONT, InvalidateRect,
@@ -97,13 +97,13 @@ const SLIDERS: [&Slider; 4] = [&FONT_SIZE, &OPACITY, &CHART_WIDTH, &CHART_HEIGHT
 
 const SHOW_LABEL: Check = Check {
     id: 200,
-    label: "Show BTC label",
+    label: "Show market label",
     get: |settings| settings.show_label,
     set: |settings, on| settings.show_label = on,
 };
 const SHOW_CHANGE: Check = Check {
     id: 201,
-    label: "Show change since the daily open",
+    label: "Show the day's change",
     get: |settings| settings.show_change,
     set: |settings, on| settings.show_change = on,
 };
@@ -149,6 +149,7 @@ const DECIMALS: i32 = 400;
 const REFRESH: i32 = 401;
 const RESET_POSITION: i32 = 402;
 const AUTOSTART: i32 = 403;
+const MARKET: i32 = 404;
 /// A slider's value label and a color's swatch take their control's id plus this.
 const COMPANION: i32 = 50;
 
@@ -332,15 +333,22 @@ fn build(hwnd: HWND, form: &Form, dpi: u32) -> i32 {
         add(WC_BUTTONW, check.label, tab | BS_AUTOCHECKBOX, MARGIN, y, LABEL_WIDTH + CONTROL_WIDTH, check.id);
     };
 
+    let dropdown = |text: &str, y: i32, id: i32, options: &[&str]| {
+        label(text, y);
+        let list = add(WC_COMBOBOXW, "", tab | CBS_DROPDOWNLIST | WS_VSCROLL.0 as i32, control_x, y, 60, id);
+        for option in options {
+            let option = wide(option);
+            // SAFETY: the combo box copies the string.
+            unsafe { SendMessageW(list, CB_ADDSTRING, None, Some(LPARAM(option.as_ptr() as isize))) };
+        }
+    };
+
+    dropdown("Market", y, MARKET, &Market::ALL.map(Market::label));
+    y += ROW;
     slider(&FONT_SIZE, y);
     y += ROW;
-    label("Decimals", y);
-    let decimals = add(WC_COMBOBOXW, "", tab | CBS_DROPDOWNLIST | WS_VSCROLL.0 as i32, control_x, y, 60, DECIMALS);
-    for option in ["0", "1", "2"] {
-        let option = wide(option);
-        // SAFETY: the combo box copies the string.
-        unsafe { SendMessageW(decimals, CB_ADDSTRING, None, Some(LPARAM(option.as_ptr() as isize))) };
-    }
+    // ANT always shows cents.
+    dropdown("BTC decimals", y, DECIMALS, &["0", "1", "2"]);
     y += ROW;
     for item in [&SHOW_LABEL, &SHOW_CHANGE] {
         check(item, y);
@@ -392,6 +400,8 @@ fn apply(hwnd: HWND, settings: Settings) {
             let state = if (check.get)(&settings) { BST_CHECKED.0 } else { 0 };
             SendMessageW(item(check.id), BM_SETCHECK, Some(WPARAM(state as usize)), None);
         }
+        let market = Market::ALL.iter().position(|market| *market == settings.market).unwrap_or_default();
+        SendMessageW(item(MARKET), CB_SETCURSEL, Some(WPARAM(market)), None);
         SendMessageW(item(DECIMALS), CB_SETCURSEL, Some(WPARAM(usize::from(settings.decimals))), None);
         // Rewriting the field under the caret would fight the person typing in it.
         if GetFocus() != item(REFRESH) {
@@ -454,6 +464,11 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
                     let current = (swatch.get)(&form.shown.get());
                     if let Some(color) = choose_color(hwnd, form, current) {
                         edit(form, |settings| (swatch.set)(settings, color));
+                    }
+                } else if id == MARKET && code == CBN_SELCHANGE {
+                    let index = SendMessageW(control, CB_GETCURSEL, None, None).0;
+                    if let Some(market) = usize::try_from(index).ok().and_then(|index| Market::ALL.get(index)) {
+                        edit(form, |settings| settings.market = *market);
                     }
                 } else if id == DECIMALS && code == CBN_SELCHANGE {
                     let index = SendMessageW(control, CB_GETCURSEL, None, None).0;

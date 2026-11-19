@@ -9,6 +9,12 @@ struct SettingsView: View {
     var body: some View {
         let settings = model.overlay.settings
         Form {
+            Section {
+                Picker("Market", selection: binding(\.market)) {
+                    ForEach(Market.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+            }
             Section("Text") {
                 LabeledContent("Size") {
                     HStack {
@@ -16,12 +22,13 @@ struct SettingsView: View {
                         Text("\(Int(settings.fontSize)) pt").monospacedDigit().frame(width: 44, alignment: .trailing)
                     }
                 }
-                Picker("Decimals", selection: binding(\.decimals)) {
+                // ANT always shows cents.
+                Picker("BTC decimals", selection: binding(\.decimals)) {
                     ForEach(Array(Settings.decimalsRange), id: \.self) { Text("\($0)").tag($0) }
                 }
                 .pickerStyle(.segmented)
-                Toggle("Show BTC label", isOn: binding(\.showLabel))
-                Toggle("Show change since the daily open", isOn: binding(\.showChange))
+                Toggle("Show market label", isOn: binding(\.showLabel))
+                Toggle("Show the day's change", isOn: binding(\.showChange))
             }
             Section("Colors") {
                 ColorPicker("Price", selection: color(\.textColor))

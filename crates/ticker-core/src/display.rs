@@ -1,8 +1,9 @@
 use serde::Serialize;
 
 use crate::feed::FeedStatus;
-use crate::kraken::FetchFailure;
+use crate::market::Market;
 use crate::settings::Settings;
+use crate::source::FetchFailure;
 use crate::time::Timestamp;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
@@ -41,7 +42,7 @@ impl TickerDisplay {
     pub const TOOLTIP_MAX_UTF16: usize = 127;
 
     pub fn new(status: &FeedStatus, settings: &Settings, now: Timestamp) -> Self {
-        let label = if settings.show_label { "BTC " } else { "" };
+        let label = if settings.show_label { format!("{} ", settings.market.label()) } else { String::new() };
         match status {
             FeedStatus::Loading => {
                 Self { segments: vec![DisplaySegment::neutral(format!("{label}..."))], dimmed: true }
@@ -52,9 +53,9 @@ impl TickerDisplay {
             FeedStatus::Live(quote) | FeedStatus::Stale(quote) => {
                 let stale = matches!(status, FeedStatus::Stale(_));
                 let mut segments =
-                    vec![DisplaySegment::neutral(format!("{label}{}", Self::price(quote.price, settings.decimals)))];
+                    vec![DisplaySegment::neutral(format!("{label}{}", Self::price(quote.price, decimals(settings))))];
                 if settings.show_change {
-                    let (text, tone) = Self::change(quote.change_24h());
+                    let (text, tone) = Self::change(quote.change());
                     segments.push(DisplaySegment::neutral("  "));
                     segments.push(DisplaySegment::new(text, tone));
                 }
@@ -73,12 +74,16 @@ impl TickerDisplay {
     /// Leaves out `failure` while the price is live, because one failed request does not make the price wrong.
     pub fn tooltip(status: &FeedStatus, failure: Option<&FetchFailure>, settings: &Settings, now: Timestamp) -> String {
         let mut parts = vec!["BTC Ticker".to_string()];
+        // The app's name already says BTC.
+        if settings.market != Market::Btc {
+            parts.push(settings.market.label().to_string());
+        }
         match status {
             FeedStatus::Loading => parts.push("loading".to_string()),
             FeedStatus::Offline => parts.push("offline".to_string()),
-            FeedStatus::Live(quote) => parts.extend([Self::price(quote.price, settings.decimals), "live".to_string()]),
+            FeedStatus::Live(quote) => parts.extend([Self::price(quote.price, decimals(settings)), "live".to_string()]),
             FeedStatus::Stale(quote) => parts.extend([
-                Self::price(quote.price, settings.decimals),
+                Self::price(quote.price, decimals(settings)),
                 format!("stale {}", Self::age(quote.fetched_at, now)),
             ]),
         }
@@ -124,6 +129,10 @@ impl TickerDisplay {
             (magnitude, Tone::Neutral)
         }
     }
+}
+
+fn decimals(settings: &Settings) -> u8 {
+    settings.market.decimals(settings.decimals)
 }
 
 /// Rounds the value's shortest decimal form, the digits a person reads, rather than its binary approximation,

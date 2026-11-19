@@ -1,18 +1,56 @@
 use serde::{Deserialize, Serialize};
 
+use crate::source::Source;
 use crate::time::Timestamp;
+
+/// What the ticker and the chart show. One market at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Market {
+    /// Bitcoin in US dollars.
+    Btc,
+    /// Anthropic's Class A shares on Nasdaq, in US dollars.
+    Ant,
+}
+
+impl Market {
+    pub const ALL: [Market; 2] = [Market::Btc, Market::Ant];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Market::Btc => "BTC",
+            Market::Ant => "ANT",
+        }
+    }
+
+    pub const fn source(self) -> Source {
+        match self {
+            Market::Btc => Source::Kraken,
+            Market::Ant => Source::Yahoo,
+        }
+    }
+
+    /// Decimal places in the shown price. BTC uses the decimals setting; a share price always shows cents.
+    pub const fn decimals(self, setting: u8) -> u8 {
+        match self {
+            Market::Btc => setting,
+            Market::Ant => 2,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Quote {
     pub price: f64,
-    pub open_24h: f64,
+    /// What the change is measured from: Kraken's open for the day for BTC, the previous close for ANT.
+    pub reference: f64,
     pub fetched_at: Timestamp,
 }
 
 impl Quote {
-    /// Fraction of the open, so 0.01 means +1%.
-    pub fn change_24h(&self) -> f64 {
-        (self.price - self.open_24h) / self.open_24h
+    /// Fraction of the reference price, so 0.01 means +1%.
+    pub fn change(&self) -> f64 {
+        (self.price - self.reference) / self.reference
     }
 }
 
@@ -38,7 +76,7 @@ pub enum Timeframe {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Spec {
     pub label: &'static str,
-    pub kraken_interval_minutes: u32,
+    pub interval_minutes: u32,
     /// How many of the newest candles the chart shows at `Zoom::Standard`.
     pub candles_shown: usize,
     pub refresh_seconds: u32,
@@ -50,13 +88,9 @@ impl Timeframe {
 
     pub const fn spec(self) -> Spec {
         match self {
-            Timeframe::M1 => Spec { label: "1m", kraken_interval_minutes: 1, candles_shown: 120, refresh_seconds: 15 },
-            Timeframe::M15 => {
-                Spec { label: "15m", kraken_interval_minutes: 15, candles_shown: 96, refresh_seconds: 60 }
-            }
-            Timeframe::H4 => {
-                Spec { label: "4h", kraken_interval_minutes: 240, candles_shown: 90, refresh_seconds: 300 }
-            }
+            Timeframe::M1 => Spec { label: "1m", interval_minutes: 1, candles_shown: 120, refresh_seconds: 15 },
+            Timeframe::M15 => Spec { label: "15m", interval_minutes: 15, candles_shown: 96, refresh_seconds: 60 },
+            Timeframe::H4 => Spec { label: "4h", interval_minutes: 240, candles_shown: 90, refresh_seconds: 300 },
         }
     }
 
@@ -65,7 +99,7 @@ impl Timeframe {
     }
 
     pub(crate) fn interval_seconds(self) -> f64 {
-        f64::from(self.spec().kraken_interval_minutes * 60)
+        f64::from(self.spec().interval_minutes * 60)
     }
 }
 

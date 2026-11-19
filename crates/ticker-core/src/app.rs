@@ -4,10 +4,10 @@ use std::time::Duration;
 use crate::chart::{CandleChart, CandleLoad, ChartFeed};
 use crate::display::TickerDisplay;
 use crate::feed::{FeedSchedule, FeedStatus};
-use crate::kraken::{self, FetchFailure, HttpOutcome};
-use crate::market::{Quote, Timeframe};
+use crate::market::{Market, Quote, Timeframe};
 use crate::overlay::{Frontmost, OverlayEvent, OverlayMode, OverlayState};
 use crate::settings::Settings;
+use crate::source::{CANDLES_TIMEOUT, FetchFailure, HttpOutcome};
 use crate::time::Timestamp;
 
 /// Names one request the core asked the shell to run. A result carrying any id other than the one the core is waiting
@@ -73,31 +73,45 @@ pub enum Effect {
 #[derive(Clone, Debug, PartialEq)]
 pub struct App {
     overlay: OverlayState,
-    started_at: Timestamp,
     now: Timestamp,
+    feed: Feed,
+    /// Counts across feeds, so a result for a replaced feed's request never matches the new feed's.
+    requests_issued: u64,
+}
+
+/// Everything fetched for one market. Switching markets replaces it, so no price or candle of one market is ever shown
+/// under another's label.
+#[derive(Clone, Debug, PartialEq)]
+struct Feed {
+    market: Market,
+    started_at: Timestamp,
     last_good: Option<Quote>,
     /// Why the last finished quote request failed, cleared by the next success.
     quote_failure: Option<FetchFailure>,
     schedule: FeedSchedule,
     quote_in_flight: Option<RequestId>,
     charts: ChartFeed,
-    requests_issued: u64,
 }
 
-impl App {
-    /// Nothing is fetched until the first input; send `Input::Tick(now)` right away.
-    pub fn new(settings: Settings, frontmost: Frontmost, now: Timestamp) -> App {
-        App {
-            overlay: OverlayState::new(settings, frontmost),
-            started_at: now,
-            now,
+impl Feed {
+    fn new(market: Market, started_at: Timestamp) -> Feed {
+        Feed {
+            market,
+            started_at,
             last_good: None,
             quote_failure: None,
             schedule: FeedSchedule::new(),
             quote_in_flight: None,
             charts: ChartFeed::default(),
-            requests_issued: 0,
         }
+    }
+}
+
+impl App {
+    /// Nothing is fetched until the first input; send `Input::Tick(now)` right away.
+    pub fn new(settings: Settings, frontmost: Frontmost, now: Timestamp) -> App {
+        let overlay = OverlayState::new(settings, frontmost);
+        App { feed: Feed::new(overlay.settings().market, now), overlay, now, requests_issued: 0 }
     }
 
     pub fn handle(&mut self, input: Input) -> Vec<Effect> {
@@ -113,32 +127,38 @@ impl App {
             Input::Tick(now) => self.advance(now),
             Input::Woke(now) => {
                 self.advance(now);
-                self.schedule.woke();
+                self.feed.schedule.woke();
             }
             Input::QuoteFinished { request, outcome, now } => {
-                if self.quote_in_flight != Some(request) {
+                if self.feed.quote_in_flight != Some(request) {
                     return Vec::new();
                 }
-                self.quote_in_flight = None;
                 self.advance(now);
-                let quote = kraken::quote_from(&outcome, self.now);
-                self.schedule.finished(quote.is_ok());
+                let feed = &mut self.feed;
+                feed.quote_in_flight = None;
+                let quote = feed.market.source().quote_from(&outcome, self.now);
+                feed.schedule.finished(quote.is_ok());
                 match quote {
                     Ok(quote) => {
-                        self.last_good = Some(quote);
-                        self.quote_failure = None;
+                        feed.last_good = Some(quote);
+                        feed.quote_failure = None;
                     }
-                    Err(failure) => self.quote_failure = Some(failure),
+                    Err(failure) => feed.quote_failure = Some(failure),
                 }
             }
             Input::CandlesFinished { request, timeframe, outcome, now } => {
-                if !self.charts.awaits(timeframe, request) {
+                if !self.feed.charts.awaits(timeframe, request) {
                     return Vec::new();
                 }
                 self.advance(now);
-                self.charts.finish(timeframe, kraken::candles_from(&outcome), self.now);
+                let candles = self.feed.market.source().candles_from(&outcome, timeframe);
+                self.feed.charts.finish(timeframe, candles, self.now);
                 charts_changed = true;
             }
+        }
+        let market = self.settings().market;
+        if self.feed.market != market {
+            self.feed = Feed::new(market, self.now);
         }
 
         let mut effects = Vec::new();
@@ -147,18 +167,19 @@ impl App {
             effects.push(Effect::SaveSettings(*self.overlay.settings()));
         }
         let refresh_seconds = self.overlay.settings().refresh_seconds;
-        if self.quote_in_flight.is_none() && self.schedule.is_due(refresh_seconds, self.now) {
+        let source = self.feed.market.source();
+        if self.feed.quote_in_flight.is_none() && self.feed.schedule.is_due(refresh_seconds, self.now) {
             let request = self.issue();
-            self.quote_in_flight = Some(request);
-            self.schedule.started(self.now);
+            self.feed.quote_in_flight = Some(request);
+            self.feed.schedule.started(self.now);
             let timeout = FeedSchedule::request_timeout(refresh_seconds);
-            effects.push(Effect::FetchQuote { request, url: kraken::TICKER_URL, timeout });
+            effects.push(Effect::FetchQuote { request, url: source.quote_url(), timeout });
         }
-        if let Some(timeframe) = self.charts.due(&self.overlay, self.now) {
+        if let Some(timeframe) = self.feed.charts.due(&self.overlay, self.now) {
             let request = self.issue();
-            self.charts.begin(timeframe, request);
+            self.feed.charts.begin(timeframe, request);
             charts_changed = true;
-            let (url, timeout) = (kraken::ohlc_url(timeframe), kraken::CANDLES_TIMEOUT);
+            let (url, timeout) = (source.candles_url(timeframe), CANDLES_TIMEOUT);
             effects.push(Effect::FetchCandles { request, timeframe, url, timeout });
         }
         if charts_changed || self.overlay != overlay_before || self.shown() != shown_before {
@@ -182,7 +203,7 @@ impl App {
 
     pub fn status(&self) -> FeedStatus {
         let refresh = f64::from(self.settings().refresh_seconds);
-        FeedStatus::derive(self.last_good.as_ref(), self.started_at, self.now, refresh)
+        FeedStatus::derive(self.feed.last_good.as_ref(), self.feed.started_at, self.now, refresh)
     }
 
     pub fn display(&self) -> TickerDisplay {
@@ -190,7 +211,7 @@ impl App {
     }
 
     pub fn quote_failure(&self) -> Option<&FetchFailure> {
-        self.quote_failure.as_ref()
+        self.feed.quote_failure.as_ref()
     }
 
     pub fn tooltip(&self) -> String {
@@ -198,7 +219,7 @@ impl App {
     }
 
     pub fn chart_load(&self, timeframe: Timeframe) -> &CandleLoad {
-        self.charts.get(timeframe)
+        self.feed.charts.get(timeframe)
     }
 
     /// The expanded timeframe and its load, or None while collapsed.
@@ -213,21 +234,21 @@ impl App {
     /// newest candle, or None while collapsed or with no candles yet.
     pub fn chart(&self, max_bars: usize) -> Option<CandleChart> {
         let (timeframe, load) = self.expanded()?;
-        load.series()?.chart(self.last_good.as_ref(), timeframe, self.settings().zoom, max_bars)
+        load.series()?.chart(self.feed.last_good.as_ref(), timeframe, self.settings().zoom, max_bars)
     }
 
     /// The earliest time at which a tick would start a request or turn the status stale or offline. The shell arms a
     /// one-shot timer for it after every input, beside its heartbeat. A time at or before `now()` means tick at once.
     pub fn next_wake(&self) -> Option<Timestamp> {
         let refresh_seconds = self.settings().refresh_seconds;
-        let quote = match self.quote_in_flight {
+        let quote = match self.feed.quote_in_flight {
             Some(_) => None,
-            None => Some(self.schedule.next_start(refresh_seconds).unwrap_or(self.now)),
+            None => Some(self.feed.schedule.next_start(refresh_seconds).unwrap_or(self.now)),
         };
-        let anchor = self.last_good.map_or(self.started_at, |quote| quote.fetched_at);
+        let anchor = self.feed.last_good.map_or(self.feed.started_at, |quote| quote.fetched_at);
         let turns = anchor.plus(f64::from(refresh_seconds) * FeedStatus::MISSED_REFRESHES_BEFORE_STALE);
         let status = (turns > self.now).then_some(turns);
-        let candles = self.charts.due_at(&self.overlay, self.now);
+        let candles = self.feed.charts.due_at(&self.overlay, self.now);
         [quote, status, candles]
             .into_iter()
             .flatten()

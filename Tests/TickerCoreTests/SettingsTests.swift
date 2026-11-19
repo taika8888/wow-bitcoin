@@ -59,8 +59,18 @@ import TickerCore
         #expect(Settings.decode(json: #"{"timeframe":"h4"}"#).zoom == .standard)
     }
 
+    @Test func theMarketLoadsByNameAndAnUnknownOrMissingOneIsBTC() {
+        #expect(Settings.decode(json: #"{"market":"ant"}"#).market == .ant)
+        #expect(Settings.decode(json: #"{"market":"eth","fontSize":20}"#).market == .btc)
+        #expect(Settings.decode(json: #"{"market":"eth","fontSize":20}"#).fontSize == 20)
+        #expect(Settings.decode(json: #"{"fontSize":20}"#).market == .btc)
+        #expect(Market.allCases.map(\.label) == ["BTC", "ANT"])
+        #expect(Market.btc.other == .ant && Market.ant.other == .btc)
+    }
+
     @Test func defaultsMatchTheProductSpec() {
         let settings = Settings()
+        #expect(settings.market == .btc)
         #expect(settings.refreshSeconds == 5)
         #expect(settings.onlyWhenWoWActive == false)
         #expect(settings.locked == false)
@@ -74,6 +84,7 @@ import TickerCore
         settings.position = ScreenPoint(x: 120, y: 840)
         settings.downColor = RGBA(red: 0.9, green: 0.1, blue: 0.2, alpha: 0.8)
         settings.onlyWhenWoWActive = true
+        settings.market = .ant
         settings.timeframe = .m1
         settings.zoom = .quarter
         settings.chartWidth = 500

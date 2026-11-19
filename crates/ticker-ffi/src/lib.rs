@@ -92,8 +92,10 @@ pub unsafe extern "C" fn ticker_handle(ticker: *mut Ticker, input: *const c_char
         let input: input::Message = serde_json::from_str(unsafe { text(input)? }).map_err(|e| e.to_string())?;
         let input = Input::from(input);
         let candles = matches!(input, Input::CandlesFinished { .. });
+        let market = ticker.app.settings().market;
         let effects = ticker.app.handle(input);
-        if candles && effects.contains(&Effect::Render) {
+        // A switch drops the old market's candles, so a chart cached for them is stale even with no quote to tell.
+        if (candles && effects.contains(&Effect::Render)) || ticker.app.settings().market != market {
             ticker.chart_revision = ticker.chart_revision.wrapping_add(1);
         }
         Ok(string(&view::Reply {

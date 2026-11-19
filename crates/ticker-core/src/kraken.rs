@@ -1,79 +1,19 @@
 //! The only place that knows Kraken's wire format. Everything past these functions trusts the domain types.
 
-use std::time::Duration;
-
 use serde_json::{Map, Value};
 
 use crate::market::{Candle, Quote, Timeframe};
+use crate::source::{BodyError, bounded, malformed, newest, positive};
 use crate::time::Timestamp;
 
 pub const TICKER_URL: &str = "https://api.kraken.com/0/public/Ticker?pair=XBTUSD";
-pub const CANDLES_TIMEOUT: Duration = Duration::from_secs(10);
-/// Kraken's OHLC endpoint answers with 721 rows, the newest still forming. Keeping 720 lets the chart zoom out with no
-/// extra request.
-pub const MAX_CANDLES: usize = 720;
 
 pub fn ohlc_url(timeframe: Timeframe) -> String {
-    format!("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval={}", timeframe.spec().kraken_interval_minutes)
+    format!("https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval={}", timeframe.spec().interval_minutes)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum KrakenError {
-    /// Kraken answered with a non-empty `error` array.
-    Api(Vec<String>),
-    /// The body is not shaped like the documented response.
-    Malformed(String),
-    /// A price is not finite and positive, or a candle's high and low do not bound its open and close.
-    InvalidValue(String),
-}
-
-/// How a request the shell ran on the core's behalf ended.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum HttpOutcome {
-    Answered {
-        status: u16,
-        body: Vec<u8>,
-    },
-    /// No answer at all: offline, timed out, refused.
-    Unreachable,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum FetchFailure {
-    Unreachable,
-    Status(u16),
-    /// Kraken answered 200 with a body that is not a usable response.
-    Rejected(KrakenError),
-}
-
-impl FetchFailure {
-    pub fn message(&self) -> String {
-        match self {
-            FetchFailure::Unreachable => "Kraken is not answering".to_string(),
-            FetchFailure::Status(code) => format!("Kraken answered HTTP {code}"),
-            FetchFailure::Rejected(KrakenError::Api(errors)) => format!("Kraken refused: {}", errors.join(", ")),
-            FetchFailure::Rejected(_) => "Kraken sent data this app cannot read".to_string(),
-        }
-    }
-}
-
-pub fn quote_from(outcome: &HttpOutcome, fetched_at: Timestamp) -> Result<Quote, FetchFailure> {
-    parse_quote(ok_body(outcome)?, fetched_at).map_err(FetchFailure::Rejected)
-}
-
-pub fn candles_from(outcome: &HttpOutcome) -> Result<Vec<Candle>, FetchFailure> {
-    parse_candles(ok_body(outcome)?).map_err(FetchFailure::Rejected)
-}
-
-fn ok_body(outcome: &HttpOutcome) -> Result<&[u8], FetchFailure> {
-    match outcome {
-        HttpOutcome::Answered { status: 200, body } => Ok(body),
-        HttpOutcome::Answered { status, .. } => Err(FetchFailure::Status(*status)),
-        HttpOutcome::Unreachable => Err(FetchFailure::Unreachable),
-    }
-}
-
-pub fn parse_quote(body: &[u8], fetched_at: Timestamp) -> Result<Quote, KrakenError> {
+/// The reference price is Kraken's open for the day.
+pub fn parse_quote(body: &[u8], fetched_at: Timestamp) -> Result<Quote, BodyError> {
     let entry = pair_entry(body)?;
     let ticker = entry.as_object();
     let last = ticker
@@ -81,11 +21,11 @@ pub fn parse_quote(body: &[u8], fetched_at: Timestamp) -> Result<Quote, KrakenEr
         .and_then(Value::as_array)
         .and_then(|c| c.first())
         .ok_or_else(|| malformed("ticker has no c[0]"))?;
-    Ok(Quote { price: price(Some(last), "c[0]")?, open_24h: price(ticker.and_then(|t| t.get("o")), "o")?, fetched_at })
+    Ok(Quote { price: price(Some(last), "c[0]")?, reference: price(ticker.and_then(|t| t.get("o")), "o")?, fetched_at })
 }
 
 /// Oldest first, the newest `MAX_CANDLES`. One bad row rejects the response.
-pub fn parse_candles(body: &[u8]) -> Result<Vec<Candle>, KrakenError> {
+pub fn parse_candles(body: &[u8]) -> Result<Vec<Candle>, BodyError> {
     let entry = pair_entry(body)?;
     let rows = entry.as_array().ok_or_else(|| malformed("OHLC result is not an array"))?;
     let mut candles = Vec::with_capacity(rows.len());
@@ -100,20 +40,17 @@ pub fn parse_candles(body: &[u8]) -> Result<Vec<Candle>, KrakenError> {
             low: field(3, "low")?,
             close: field(4, "close")?,
         };
-        if candle.low > candle.open.min(candle.close) || candle.high < candle.open.max(candle.close) {
-            return Err(KrakenError::InvalidValue(format!("row {index} high/low do not bound open/close")));
-        }
-        candles.push(candle);
+        candles.push(bounded(candle, index)?);
     }
-    Ok(candles.split_off(candles.len().saturating_sub(MAX_CANDLES)))
+    Ok(newest(candles))
 }
 
-fn pair_entry(body: &[u8]) -> Result<Value, KrakenError> {
+fn pair_entry(body: &[u8]) -> Result<Value, BodyError> {
     let Ok(Value::Object(mut root)) = serde_json::from_slice::<Value>(body) else {
         return Err(malformed("body is not a JSON object"));
     };
     if let Some(errors) = api_errors(&root) {
-        return Err(KrakenError::Api(errors));
+        return Err(BodyError::Api(errors));
     }
     let Some(Value::Object(result)) = root.remove("result") else {
         return Err(malformed("no result object"));
@@ -133,19 +70,12 @@ fn api_errors(root: &Map<String, Value>) -> Option<Vec<String>> {
     errors.filter(|errors| !errors.is_empty())
 }
 
-fn price(raw: Option<&Value>, field: &str) -> Result<f64, KrakenError> {
+/// Kraken sends prices as decimal strings; a JSON number is read too.
+fn price(raw: Option<&Value>, field: &str) -> Result<f64, BodyError> {
     let value = match raw {
         Some(Value::String(text)) => text.parse::<f64>().ok(),
         Some(Value::Number(number)) => number.as_f64(),
         _ => None,
     };
-    let value = value.ok_or_else(|| malformed(format!("{field} is not a number")))?;
-    if !value.is_finite() || value <= 0.0 {
-        return Err(KrakenError::InvalidValue(format!("{field} = {value}")));
-    }
-    Ok(value)
-}
-
-fn malformed(detail: impl Into<String>) -> KrakenError {
-    KrakenError::Malformed(detail.into())
+    positive(value.ok_or_else(|| malformed(format!("{field} is not a number")))?, field)
 }

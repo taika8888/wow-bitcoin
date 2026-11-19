@@ -52,7 +52,7 @@ fn the_standard_zoom_draws_every_shown_candle_inside_the_padded_domain() {
 fn every_zoom_stays_in_budget_and_draws_the_newest_candles() {
     for (body, timeframe, ..) in RECORDED {
         let candles = parse_candles(body.as_bytes()).unwrap();
-        let base = f64::from(timeframe.spec().kraken_interval_minutes * 60);
+        let base = f64::from(timeframe.spec().interval_minutes * 60);
         for zoom in Zoom::ALL {
             for budget in [DEFAULT_BUDGET, 7, 1] {
                 let case = format!("{timeframe:?} {zoom:?} budget {budget}");
@@ -146,7 +146,7 @@ fn fetched_inside_the_newest_candle() -> CandleSeries {
 }
 
 fn quote(price: f64, fetched_at: Timestamp) -> Quote {
-    Quote { price, open_24h: price, fetched_at }
+    Quote { price, reference: price, fetched_at }
 }
 
 #[test]

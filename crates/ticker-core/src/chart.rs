@@ -2,9 +2,9 @@ use std::ops::RangeInclusive;
 
 use crate::app::RequestId;
 use crate::display::Tone;
-use crate::kraken::FetchFailure;
 use crate::market::{Candle, Quote, Timeframe, Zoom};
 use crate::overlay::{OverlayMode, OverlayState};
+use crate::source::FetchFailure;
 use crate::time::Timestamp;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -14,7 +14,7 @@ pub struct CandleSeries {
 }
 
 impl CandleSeries {
-    /// What the chart draws. A quote taken after this fetch and inside the newest candle's interval is a trade Kraken
+    /// What the chart draws. A quote taken after this fetch and inside the newest candle's interval is a trade the source
     /// had not reported yet, so it moves that candle's close and widens its wicks. Any later quote waits for the next
     /// fetch to bring the candle it belongs to.
     pub fn chart(

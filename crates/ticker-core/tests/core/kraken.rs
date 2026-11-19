@@ -1,5 +1,5 @@
 use ticker_core::kraken::{self, parse_candles, parse_quote};
-use ticker_core::{Candle, FetchFailure, HttpOutcome, KrakenError, Quote, Timeframe, Timestamp};
+use ticker_core::{BodyError, Candle, FetchFailure, FetchProblem, HttpOutcome, Quote, Source, Timeframe, Timestamp};
 
 use crate::fixtures;
 
@@ -20,26 +20,26 @@ enum Failure {
     InvalidValue,
 }
 
-fn failure<T>(result: Result<T, KrakenError>) -> Option<Failure> {
+fn failure<T>(result: Result<T, BodyError>) -> Option<Failure> {
     match result {
         Ok(_) => None,
-        Err(KrakenError::Api(_)) => Some(Failure::Api),
-        Err(KrakenError::Malformed(_)) => Some(Failure::Malformed),
-        Err(KrakenError::InvalidValue(_)) => Some(Failure::InvalidValue),
+        Err(BodyError::Api(_)) => Some(Failure::Api),
+        Err(BodyError::Malformed(_)) => Some(Failure::Malformed),
+        Err(BodyError::InvalidValue(_)) => Some(Failure::InvalidValue),
     }
 }
 
 #[test]
 fn parses_the_recorded_ticker() {
     let quote = parse_quote(fixtures::TICKER.as_bytes(), NOW).unwrap();
-    assert_eq!(quote, Quote { price: 80489.7, open_24h: 80440.8, fetched_at: NOW });
-    assert!((quote.change_24h() - (80489.7 - 80440.8) / 80440.8).abs() < 1e-12);
+    assert_eq!(quote, Quote { price: 80489.7, reference: 80440.8, fetched_at: NOW });
+    assert!((quote.change() - (80489.7 - 80440.8) / 80440.8).abs() < 1e-12);
 }
 
 #[test]
 fn kraken_error_array_is_an_api_error() {
     let body = br#"{"error":["EQuery:Unknown asset pair"]}"#;
-    assert_eq!(parse_quote(body, NOW), Err(KrakenError::Api(vec!["EQuery:Unknown asset pair".to_string()])));
+    assert_eq!(parse_quote(body, NOW), Err(BodyError::Api(vec!["EQuery:Unknown asset pair".to_string()])));
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn keeps_the_newest_720_candles_of_the_recorded_721_oldest_first() {
     {
         let candles = parse_candles(body.as_bytes()).unwrap();
         assert_eq!(candles.len(), 720);
-        let step = f64::from(timeframe.spec().kraken_interval_minutes * 60);
+        let step = f64::from(timeframe.spec().interval_minutes * 60);
         for pair in candles.windows(2) {
             assert_eq!(pair[1].time.seconds_since(pair[0].time), step);
         }
@@ -137,7 +137,7 @@ fn kraken_error_array_in_ohlc_is_an_api_error() {
 fn timeframe_registry() {
     let specs = Timeframe::ALL.map(Timeframe::spec);
     assert_eq!(specs.map(|spec| spec.label), ["1m", "15m", "4h"]);
-    assert_eq!(specs.map(|spec| spec.kraken_interval_minutes), [1, 15, 240]);
+    assert_eq!(specs.map(|spec| spec.interval_minutes), [1, 15, 240]);
     assert_eq!(specs.map(|spec| spec.candles_shown), [120, 96, 90]);
     assert_eq!(specs.map(|spec| spec.refresh_seconds), [15, 60, 300]);
     assert_eq!(kraken::ohlc_url(Timeframe::H4), "https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=240");
@@ -147,12 +147,19 @@ fn timeframe_registry() {
 #[test]
 fn an_http_outcome_becomes_a_quote_or_says_why_not() {
     let answered = |status, body: &str| HttpOutcome::Answered { status, body: body.as_bytes().to_vec() };
-    assert_eq!(kraken::quote_from(&answered(200, fixtures::TICKER), NOW).map(|quote| quote.price), Ok(80489.7));
-    assert_eq!(kraken::quote_from(&answered(503, fixtures::TICKER), NOW), Err(FetchFailure::Status(503)));
-    assert_eq!(kraken::quote_from(&HttpOutcome::Unreachable, NOW), Err(FetchFailure::Unreachable));
+    let failed = |problem| Err(FetchFailure { source: Source::Kraken, problem });
+    let kraken = Source::Kraken;
+    assert_eq!(kraken.quote_from(&answered(200, fixtures::TICKER), NOW).map(|quote| quote.price), Ok(80489.7));
+    assert_eq!(kraken.quote_from(&answered(503, fixtures::TICKER), NOW), failed(FetchProblem::Status(503)));
+    assert_eq!(kraken.quote_from(&HttpOutcome::Unreachable, NOW), failed(FetchProblem::Unreachable));
     assert!(matches!(
-        kraken::candles_from(&answered(200, "<html>")),
-        Err(FetchFailure::Rejected(KrakenError::Malformed(_)))
+        kraken.candles_from(&answered(200, "<html>"), Timeframe::M15),
+        Err(FetchFailure { source: Source::Kraken, problem: FetchProblem::Rejected(BodyError::Malformed(_)) })
     ));
-    assert_eq!(kraken::candles_from(&answered(200, fixtures::OHLC_15)).map(|candles| candles.len()), Ok(720));
+    assert_eq!(
+        kraken.candles_from(&answered(200, fixtures::OHLC_15), Timeframe::M15).map(|candles| candles.len()),
+        Ok(720)
+    );
+    assert_eq!(kraken.quote_url(), kraken::TICKER_URL);
+    assert_eq!(kraken.candles_url(Timeframe::H4), kraken::ohlc_url(Timeframe::H4));
 }

@@ -1,3 +1,22 @@
+/// What the ticker and the chart show, one at a time.
+public enum Market: String, CaseIterable, Codable, Hashable, Sendable {
+    case btc, ant
+
+    public var label: String {
+        switch self {
+        case .btc: "BTC"
+        case .ant: "ANT"
+        }
+    }
+
+    public var other: Market {
+        switch self {
+        case .btc: .ant
+        case .ant: .btc
+        }
+    }
+}
+
 public enum Timeframe: String, CaseIterable, Codable, Hashable, Sendable {
     case m1, m15, h4
 

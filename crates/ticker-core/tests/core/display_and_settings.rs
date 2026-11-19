@@ -1,10 +1,14 @@
 use ticker_core::{
-    DisplaySegment, FeedSchedule, FeedStatus, FetchFailure, KrakenError, Quote, Rgba, ScreenPoint, Settings,
-    TickerDisplay, Timeframe, Timestamp, Tone, Zoom,
+    BodyError, DisplaySegment, FeedSchedule, FeedStatus, FetchFailure, FetchProblem, Market, Quote, Rgba, ScreenPoint,
+    Settings, Source, TickerDisplay, Timeframe, Timestamp, Tone, Zoom,
 };
 
+fn kraken_failure(problem: FetchProblem) -> FetchFailure {
+    FetchFailure { source: Source::Kraken, problem }
+}
+
 const FETCHED_AT: Timestamp = Timestamp::from_unix_seconds(1_793_847_300.0);
-const QUOTE: Quote = Quote { price: 80482.4, open_24h: 80442.0, fetched_at: FETCHED_AT };
+const QUOTE: Quote = Quote { price: 80482.4, reference: 80442.0, fetched_at: FETCHED_AT };
 
 #[test]
 fn price_formatting() {
@@ -57,7 +61,7 @@ fn label_and_change_are_optional() {
 
 #[test]
 fn flat_change_is_neutral() {
-    let flat = Quote { price: 80442.01, open_24h: 80442.0, fetched_at: FETCHED_AT };
+    let flat = Quote { price: 80442.01, reference: 80442.0, fetched_at: FETCHED_AT };
     let display = TickerDisplay::new(&FeedStatus::Live(flat), &Settings::default(), FETCHED_AT);
     assert_eq!(display.text(), "BTC $80,442  0.00%");
     assert!(display.segments.iter().all(|segment| segment.tone == Tone::Neutral));
@@ -84,14 +88,18 @@ fn a_stale_age_counts_whole_seconds_then_minutes_hours_and_days() {
 #[test]
 fn the_tooltip_gives_the_price_its_state_and_why_it_is_not_updating() {
     let settings = Settings::default();
-    let unreachable = Some(&FetchFailure::Unreachable);
+    let unreachable = Some(&kraken_failure(FetchProblem::Unreachable));
     let later = FETCHED_AT.plus(200.0);
     for (status, failure, tooltip) in [
         (FeedStatus::Live(QUOTE), None, "BTC Ticker · $80,482 · live"),
         (FeedStatus::Live(QUOTE), unreachable, "BTC Ticker · $80,482 · live"),
         (FeedStatus::Stale(QUOTE), unreachable, "BTC Ticker · $80,482 · stale 3m · Kraken is not answering"),
         (FeedStatus::Stale(QUOTE), None, "BTC Ticker · $80,482 · stale 3m"),
-        (FeedStatus::Offline, Some(&FetchFailure::Status(503)), "BTC Ticker · offline · Kraken answered HTTP 503"),
+        (
+            FeedStatus::Offline,
+            Some(&kraken_failure(FetchProblem::Status(503))),
+            "BTC Ticker · offline · Kraken answered HTTP 503",
+        ),
         (FeedStatus::Loading, None, "BTC Ticker · loading"),
     ] {
         assert_eq!(TickerDisplay::tooltip(&status, failure, &settings, later), tooltip);
@@ -103,7 +111,7 @@ fn the_tooltip_gives_the_price_its_state_and_why_it_is_not_updating() {
 
 #[test]
 fn a_long_reason_is_cut_to_fit_the_tray_tooltip() {
-    let refused = FetchFailure::Rejected(KrakenError::Api(vec!["EService:Unavailable ü".repeat(10)]));
+    let refused = kraken_failure(FetchProblem::Rejected(BodyError::Api(vec!["EService:Unavailable ü".repeat(10)])));
     let tooltip = TickerDisplay::tooltip(&FeedStatus::Offline, Some(&refused), &Settings::default(), FETCHED_AT);
     assert_eq!(tooltip.encode_utf16().count(), TickerDisplay::TOOLTIP_MAX_UTF16);
     assert!(tooltip.starts_with("BTC Ticker · offline · Kraken refused: EService:Unavailable"));
@@ -121,6 +129,36 @@ fn not_live_is_dimmed_and_labelled() {
     let loading = TickerDisplay::new(&FeedStatus::Loading, &settings, FETCHED_AT);
     assert_eq!(loading.text(), "BTC ...");
     assert!(loading.dimmed);
+}
+
+#[test]
+fn ant_shows_its_label_and_always_cents() {
+    let quote = Quote { price: 95.7, reference: 83.0, fetched_at: FETCHED_AT };
+    for decimals in Settings::DECIMALS_RANGE {
+        let settings = Settings { market: Market::Ant, decimals, ..Settings::default() };
+        assert_eq!(TickerDisplay::new(&FeedStatus::Live(quote), &settings, FETCHED_AT).text(), "ANT $95.70  +15.30%");
+        let tooltip = TickerDisplay::tooltip(&FeedStatus::Live(quote), None, &settings, FETCHED_AT);
+        assert_eq!(tooltip, "BTC Ticker · ANT · $95.70 · live");
+    }
+    let ant = Settings { market: Market::Ant, show_label: false, ..Settings::default() };
+    assert_eq!(TickerDisplay::new(&FeedStatus::Loading, &ant, FETCHED_AT).text(), "...");
+    let offline = TickerDisplay::new(&FeedStatus::Offline, &Settings { show_label: true, ..ant }, FETCHED_AT);
+    assert_eq!(offline.text(), "ANT offline");
+}
+
+#[test]
+fn the_market_decodes_from_its_name_and_falls_back_to_btc() {
+    assert_eq!(Settings::default().market, Market::Btc);
+    assert_eq!(Settings::decode(Some(r#"{"market":"ant","decimals":1}"#)).market, Market::Ant);
+    assert_eq!(Settings::decode(Some(r#"{"market":"ant","decimals":1}"#)).decimals, 1);
+    for json in [r#"{"market":"btc"}"#, r#"{"market":"eth"}"#, r#"{"market":"ANT"}"#, r#"{"market":1}"#, "{}"] {
+        assert_eq!(Settings::decode(Some(json)).market, Market::Btc, "{json}");
+    }
+    let saved = Settings { market: Market::Ant, ..Settings::default() };
+    assert!(saved.json().contains(r#""market":"ant""#));
+    assert_eq!(Settings::decode(Some(&saved.json())), saved);
+    assert_eq!(Market::ALL.map(Market::label), ["BTC", "ANT"]);
+    assert_eq!(Market::ALL.map(Market::source), [Source::Kraken, Source::Yahoo]);
 }
 
 #[test]
@@ -233,6 +271,7 @@ fn json_has_sorted_keys_and_the_mac_key_names() {
         "downColor",
         "fontSize",
         "locked",
+        "market",
         "onlyWhenWoWActive",
         "opacity",
         "position",
@@ -262,7 +301,7 @@ fn without_a_quote_it_is_loading_then_offline() {
 
 #[test]
 fn a_quote_is_live_until_three_refreshes_are_missed() {
-    let quote = Quote { price: 1.0, open_24h: 1.0, fetched_at: START.plus(100.0) };
+    let quote = Quote { price: 1.0, reference: 1.0, fetched_at: START.plus(100.0) };
     assert_eq!(FeedStatus::derive(Some(&quote), START, START.plus(100.0), 5.0), FeedStatus::Live(quote));
     assert_eq!(FeedStatus::derive(Some(&quote), START, START.plus(115.0), 5.0), FeedStatus::Live(quote));
     assert_eq!(FeedStatus::derive(Some(&quote), START, START.plus(115.001), 5.0), FeedStatus::Stale(quote));
@@ -306,7 +345,7 @@ fn one_failed_request_never_shows_the_quote_as_stale() {
                     fetched.push(clock);
                 }
             }
-            let quote = Quote { price: 1.0, open_24h: 1.0, fetched_at: fetched[0] };
+            let quote = Quote { price: 1.0, reference: 1.0, fetched_at: fetched[0] };
             let span = fetched[1].seconds_since(fetched[0]);
             let first_stale =
                 (0..=(span * 10.0) as u32).map(|step| fetched[0].plus(f64::from(step) / 10.0)).find(|&now| {

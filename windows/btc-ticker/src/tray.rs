@@ -1,5 +1,6 @@
 //! The notification-area icon and its menu. Windows 11 puts a new icon in the overflow until the user pins it.
 
+use ticker_core::Settings;
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETVERSION, NOTIFYICON_VERSION_4,
@@ -79,8 +80,8 @@ impl Drop for Tray {
 
 /// A classic menu needs its owner in the foreground to close when the user clicks elsewhere, so this one takes
 /// focus; the tray is outside the game anyway.
-pub fn choose(owner: HWND, at: POINT, locked: bool) -> Option<Command> {
-    let items = menu::items(locked);
+pub fn choose(owner: HWND, at: POINT, settings: &Settings) -> Option<Command> {
+    let items = menu::items(settings);
     // SAFETY: the menu is created, tracked and destroyed here; labels outlive AppendMenuW, which copies them.
     unsafe {
         let popup = CreatePopupMenu().ok()?;
