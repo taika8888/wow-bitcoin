@@ -34,8 +34,9 @@ pub fn parse_quote(body: &[u8], fetched_at: Timestamp) -> Result<Quote, BodyErro
 }
 
 /// Oldest first, the newest `MAX_CANDLES`. Rows with no trades carry nulls and are skipped. Yahoo ends the series with
-/// a zero-range row stamped with the time of the request; it is dropped, because the forming candle before it already
-/// holds that trade and the chart adds the live quote to it.
+/// a zero-range row stamped with the time of the request. It is dropped, because the forming candle before it already
+/// holds that trade and the chart adds the live quote to it. A forming candle still all null takes the tick's trade
+/// instead, so the newest candle is the current interval's and later quotes land in it.
 pub fn parse_candles(body: &[u8], timeframe: Timeframe) -> Result<Vec<Candle>, BodyError> {
     let result = chart_result(body)?;
     let Some(times) = result.get("timestamp") else { return Ok(Vec::new()) };
@@ -59,8 +60,12 @@ pub fn parse_candles(body: &[u8], timeframe: Timeframe) -> Result<Vec<Candle>, B
     let live_tick = matches!(times.as_slice(), [.., before, last] if last - before < timeframe.interval_seconds());
     let rows = times.len() - usize::from(live_tick);
     let mut candles = Vec::with_capacity(rows);
+    let cells_at = |row: usize| [open, high, low, close].map(|column| column.get(row).filter(|cell| !cell.is_null()));
     for (index, time) in times.iter().take(rows).enumerate() {
-        let cells = [open, high, low, close].map(|column| column.get(index).filter(|cell| !cell.is_null()));
+        let mut cells = cells_at(index);
+        if live_tick && index + 1 == rows && cells.iter().all(Option::is_none) {
+            cells = cells_at(rows);
+        }
         let [Some(o), Some(h), Some(l), Some(c)] = cells else { continue };
         let field = |cell: &Value, name: &str| {
             let value = cell.as_f64().ok_or_else(|| malformed(format!("row {index} {name} is not a number")))?;

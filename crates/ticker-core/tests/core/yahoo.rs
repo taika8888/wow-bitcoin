@@ -68,18 +68,19 @@ fn rejects_bodies_that_are_not_a_chart() {
 }
 
 /// Of the recorded rows, the ones with no trades are null and skipped, and the final zero-range row stamped with the
-/// time of the request is dropped, so the newest kept candle is the one still forming.
+/// time of the request is dropped, so the newest kept candle is the one still forming. The recorded 1m forming candle
+/// is null, so it takes the tick's $95.69.
 #[test]
 fn keeps_the_recorded_rows_with_trades_and_drops_the_live_tick() {
-    for (timeframe, body, kept, newest) in [
-        (Timeframe::M1, fixtures::YAHOO_1M, 82, 1_795_111_680.0),
-        (Timeframe::M15, fixtures::YAHOO_15M, 7, 1_795_111_200.0),
-        (Timeframe::H4, fixtures::YAHOO_4H, 1, 1_795_098_600.0),
+    for (timeframe, body, kept, newest, close) in [
+        (Timeframe::M1, fixtures::YAHOO_1M, 83, 1_795_111_740.0, 95.69),
+        (Timeframe::M15, fixtures::YAHOO_15M, 7, 1_795_111_200.0, 95.37),
+        (Timeframe::H4, fixtures::YAHOO_4H, 1, 1_795_098_600.0, 95.37),
     ] {
         let candles = parse_candles(body.as_bytes(), timeframe).unwrap();
         assert_eq!(candles.len(), kept, "{timeframe:?}");
         assert_eq!(candles.last().map(|candle| candle.time), Some(at(newest)), "{timeframe:?}");
-        assert_eq!(candles.last().map(|candle| cents(candle.close)), Some(95.37), "{timeframe:?}");
+        assert_eq!(candles.last().map(|candle| cents(candle.close)), Some(close), "{timeframe:?}");
         for pair in candles.windows(2) {
             assert!(pair[1].time > pair[0].time, "{timeframe:?}: oldest first");
         }
@@ -116,10 +117,12 @@ fn drops_a_final_row_only_when_it_comes_less_than_an_interval_after_the_one_befo
 }
 
 #[test]
-fn a_live_tick_after_a_null_row_is_still_dropped() {
+fn a_null_forming_candle_takes_the_live_tick_trade() {
     let body = chart_body("60,120,150", "1,null,2", "1,null,2", "1,null,2", "1,null,2");
     let candles = parse_candles(body.as_bytes(), Timeframe::M1).unwrap();
-    assert_eq!(candles.iter().map(|candle| candle.time).collect::<Vec<_>>(), [at(60.0)]);
+    let forming = Candle { time: at(120.0), open: 2.0, high: 2.0, low: 2.0, close: 2.0 };
+    assert_eq!(candles.last(), Some(&forming));
+    assert_eq!(candles.len(), 2);
 }
 
 #[test]

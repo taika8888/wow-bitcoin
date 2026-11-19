@@ -90,6 +90,11 @@ fn chart_metadata_does_not_serialize_bars_on_quote_updates() {
     assert!(!view["chart"]["priceTicks"].as_array().unwrap().is_empty());
     app.send(json!({"type":"tick", "now":1002}));
     assert_eq!(app.view(0)["chartRevision"], 1);
+    // No quote has arrived, so only the revision tells a shell its cached BTC chart is gone.
+    app.send(json!({"type":"overlay", "event":{"type":"settings_edited", "settings":{"market":"ant"}}}));
+    let view = app.view(150);
+    assert_eq!(view["chartRevision"], 2);
+    assert!(view["chart"].is_null());
 }
 
 #[test]
