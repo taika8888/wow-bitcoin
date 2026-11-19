@@ -4,7 +4,7 @@
 
 use std::cell::Cell;
 
-use ticker_core::{Rect, Screens, placement};
+use ticker_core::{Market, Rect, Screens, Settings, placement};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_MENU, COLOR_MENUTEXT, CreateFontIndirectW, DT_LEFT,
@@ -32,16 +32,34 @@ use crate::win;
 pub enum Command {
     Settings,
     ToggleLock,
+    /// Shows the other market.
+    SwitchMarket,
     Quit,
 }
 
+const ROWS: usize = 4;
+
 /// Both menus, the overlay's and the tray icon's, list these.
-pub fn items(locked: bool) -> [(Command, &'static str); 3] {
+pub fn items(settings: &Settings) -> [(Command, &'static str); ROWS] {
     [
         (Command::Settings, "Settings…"),
-        (Command::ToggleLock, if locked { "Unlock Position" } else { "Lock Position" }),
+        (Command::ToggleLock, if settings.locked { "Unlock Position" } else { "Lock Position" }),
+        (
+            Command::SwitchMarket,
+            match other_market(settings.market) {
+                Market::Btc => "Show BTC",
+                Market::Ant => "Show ANT",
+            },
+        ),
         (Command::Quit, "Quit BTC Ticker"),
     ]
+}
+
+pub fn other_market(market: Market) -> Market {
+    match market {
+        Market::Btc => Market::Ant,
+        Market::Ant => Market::Btc,
+    }
 }
 
 pub const CLASS: windows::core::PCWSTR = w!("BTCTickerMenu");
@@ -60,18 +78,18 @@ pub struct Popup {
 }
 
 struct Rows {
-    items: [(Command, &'static str); 3],
+    items: [(Command, &'static str); ROWS],
     height: i32,
     font: HFONT,
     hovered: Cell<Option<usize>>,
 }
 
 impl Popup {
-    pub fn open(owner: HWND, at: POINT, locked: bool, screens: &Screens) -> Result<Popup> {
+    pub fn open(owner: HWND, at: POINT, settings: &Settings, screens: &Screens) -> Result<Popup> {
         win::register_class(CLASS, Some(procedure), None);
         let scale = win::scale(owner);
         let row = (ROW_HEIGHT * scale).round() as i32;
-        let size = ((WIDTH * scale).round(), f64::from(row * 3 + 2));
+        let size = ((WIDTH * scale).round(), f64::from(row * ROWS as i32 + 2));
         let wanted = Rect::new(f64::from(at.x), f64::from(at.y), size.0, size.1);
         let area = placement::screen_for(&wanted, screens).map_or(screens.primary.work, |screen| screen.work);
         let spot = placement::clamp(&wanted, &area);
@@ -92,7 +110,7 @@ impl Popup {
                 None,
             )?;
             let rows =
-                Box::new(Rows { items: items(locked), height: row, font: menu_font(hwnd), hovered: Cell::new(None) });
+                Box::new(Rows { items: items(settings), height: row, font: menu_font(hwnd), hovered: Cell::new(None) });
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, Box::into_raw(rows) as isize);
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             OPEN.set(hwnd.0 as isize);
@@ -153,7 +171,7 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
     let rows = unsafe { (GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const Rows).as_ref() };
     let row_at = |lparam: LPARAM| {
         let y = i32::from((lparam.0 >> 16) as i16);
-        rows.and_then(|rows| usize::try_from(y / rows.height).ok()).filter(|row| *row < 3)
+        rows.and_then(|rows| usize::try_from(y / rows.height).ok()).filter(|row| *row < ROWS)
     };
     match (message, rows) {
         (WM_MOUSEACTIVATE, _) => return LRESULT(MA_NOACTIVATE as isize),

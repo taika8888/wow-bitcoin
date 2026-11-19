@@ -19,7 +19,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::{HSTRING, PCWSTR, Result, w};
 
 use crate::foreground;
-use crate::menu::{Command, Popup};
+use crate::menu::{self, Command, Popup};
 use crate::net::{Net, Request};
 use crate::overlay::{Overlay, Pointer};
 use crate::settings_store::SettingsStore;
@@ -233,7 +233,7 @@ impl Shell {
             }
             Event::TrayClicked(at) => {
                 let before = foreground_window();
-                if let Some(command) = tray::choose(self.main, at, self.app.settings().locked) {
+                if let Some(command) = tray::choose(self.main, at, self.app.settings()) {
                     self.command(command, before);
                 }
             }
@@ -266,7 +266,7 @@ impl Shell {
         }
         if let Pointer::RightUp { at } = pointer {
             self.popup = None;
-            match Popup::open(self.overlay.hwnd(), at, self.app.settings().locked, &win::screens()) {
+            match Popup::open(self.overlay.hwnd(), at, self.app.settings(), &win::screens()) {
                 Ok(popup) => self.popup = Some(popup),
                 Err(error) => eprintln!("could not open the menu: {error}"),
             }
@@ -289,6 +289,11 @@ impl Shell {
                 },
             },
             Command::ToggleLock => self.handle(Input::Overlay(OverlayEvent::ToggleLock)),
+            Command::SwitchMarket => {
+                let settings = *self.app.settings();
+                let market = menu::other_market(settings.market);
+                self.handle(Input::Overlay(OverlayEvent::SettingsEdited(Settings { market, ..settings })));
+            }
             // SAFETY: ends this thread's message loop.
             Command::Quit => unsafe { PostQuitMessage(0) },
         }

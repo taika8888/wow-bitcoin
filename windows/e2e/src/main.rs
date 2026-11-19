@@ -28,7 +28,7 @@ const SETTINGS_CLASS: &str = "BTCTickerSettings";
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 /// Where a test run of the app keeps its Start with Windows value, as `BTCTicker-<pid>`.
 const AUTOSTART_TEST_KEY: &str = r"Software\BTCTicker-test";
-const MENU_ROWS: f64 = 3.0;
+const MENU_ROWS: f64 = 4.0;
 const WHEEL_DELTA: i32 = 120;
 /// `MOUSEWHEEL_ROUTING_FOCUS`: the wheel goes to the focused window, as with "Scroll inactive windows" off.
 const FOCUS_ROUTING: u32 = 0;
@@ -1204,7 +1204,7 @@ fn start_with_windows(window: HWND, session: &Session) -> Result<String, String>
 
 fn quit(report: &mut Report, session: &mut Session) {
     let chosen = session.open_menu().and_then(|menu| {
-        let row = Session::menu_row(menu, 2.0);
+        let row = Session::menu_row(menu, 3.0);
         session.mouse.click(row, false, &session.allowed())
     });
     let status = chosen.is_ok().then(|| session.ticker.exited_within(10.0)).flatten();
