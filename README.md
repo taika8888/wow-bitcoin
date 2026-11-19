@@ -2,7 +2,7 @@
 
 # BTC Ticker
 
-A small live Bitcoin price that floats above World of Warcraft. The ticker never takes focus from the game, so WoW keeps the keyboard. Click the ticker to open a candlestick chart, and click it again to close the chart.
+A small live Bitcoin price that floats above World of Warcraft. It can show Anthropic's Nasdaq shares (ANT) instead. The ticker never takes focus from the game, so WoW keeps the keyboard. Click the ticker to open a candlestick chart, and click it again to close the chart.
 
 <p>
   <img src="assets/screenshots/ticker.png" width="184" alt="The ticker showing the BTC price and its change since the daily open">
@@ -10,7 +10,7 @@ A small live Bitcoin price that floats above World of Warcraft. The ticker never
   <img src="assets/screenshots/chart.png" width="400" alt="The open chart with 15-minute candles">
 </p>
 
-It runs on Windows 11, and on macOS 14 or later on Apple silicon and Intel Macs. Windows 10 should work too, but it hasn't been tested. Prices come from Kraken's public API. There's no account, no API key and no tracking.
+It runs on Windows 11, and on macOS 14 or later on Apple silicon and Intel Macs. Windows 10 should work too, but it hasn't been tested. Bitcoin prices come from Kraken's public API. ANT prices come from Yahoo Finance's public chart API, and only while ANT is chosen. There's no account, no API key and no tracking.
 
 ## Install
 
@@ -73,11 +73,13 @@ Set WoW's display mode to **Windowed** or **Windowed (Fullscreen)**. In exclusiv
 - Scroll, turn the mouse wheel or pinch over the open chart to zoom. The game keeps the keyboard and the focus, and it doesn't get the wheel while the pointer is over the chart. On Windows, this holds even with the "Scroll inactive windows when I hover over them" setting turned off.
 - While the position is unlocked, drag the ticker to move it. On Windows, you can also drag the open chart, and drag its corner grip, opposite the ticker, to resize it. The new size is saved when you release the mouse.
 - **Lock Position** stops dragging and resizing. Clicks still open the chart.
+- **Show ANT** switches the ticker and the chart to Anthropic's shares, and **Show BTC** switches back. Outside Nasdaq trading hours, the ticker shows the last regular-session price, and the 1m and 15m charts include pre- and post-market trades.
 - When the price stops updating, the ticker dims it and marks it stale with its age, for example `stale 3m`. Hover over the tray icon on Windows, or the menu bar icon on macOS, to see the price, whether it is live, and why it is not updating, for example `Kraken is not answering`. The tooltip works while the ticker is hidden too.
 
 The **Settings** window has these options:
 
-- Font size, decimals (0 to 2), and whether to show the `BTC` label and the change since the daily open.
+- The market, BTC or ANT.
+- Font size, BTC decimals (0 to 2; ANT always shows cents), and whether to show the market label and the day's change. For BTC, the change is since Kraken's daily open; for ANT, since the previous close.
 - Price, up and down colors, and the background opacity.
 - Chart width and height. A wider chart draws more bars before neighbouring candles merge into one.
 - Refresh interval (2 to 300 seconds, default 5).
@@ -112,16 +114,23 @@ Neither app has an installer.
 
 ## Privacy
 
-The apps send only two kinds of request, both HTTPS GETs to Kraken's public REST API at `api.kraken.com`:
+The apps send only HTTPS GETs, and only to the source of the market shown.
+
+For BTC, the default, they go to Kraken's public REST API at `api.kraken.com`:
 
 - `https://api.kraken.com/0/public/Ticker?pair=XBTUSD` for the price, once per refresh interval, and less often after repeated failures.
 - `https://api.kraken.com/0/public/OHLC?pair=XBTUSD&interval=<minutes>` for the candles, only while the chart is open.
 
-There are no accounts, no API keys, no analytics and no telemetry. Like any web request, a request to Kraken shows Kraken your IP address. Settings stay on your computer.
+For ANT, they go to Yahoo Finance's public chart API at `query1.finance.yahoo.com`, on the same schedule:
+
+- `https://query1.finance.yahoo.com/v8/finance/chart/ANT?interval=1d&range=1d` for the price.
+- `https://query1.finance.yahoo.com/v8/finance/chart/ANT?interval=<interval>&range=<range>` for the candles, only while the chart is open.
+
+There are no accounts, no API keys, no analytics and no telemetry. Like any web request, a request to Kraken or Yahoo shows that server your IP address. Settings stay on your computer.
 
 ## Disclaimer
 
-BTC Ticker is not affiliated with or endorsed by Blizzard Entertainment or Kraken. World of Warcraft is a trademark of Blizzard Entertainment.
+BTC Ticker is not affiliated with or endorsed by Blizzard Entertainment, Kraken, Yahoo or Anthropic. World of Warcraft is a trademark of Blizzard Entertainment.
 
 The app draws only its own window above the game. It never reads the game's memory or files, injects code into the game, sends input to the game, or automates it. To show the ticker only while WoW is frontmost, it asks the operating system which app is in front.
 
