@@ -89,6 +89,16 @@ The **Settings** window has these options:
 
 The app also remembers the last timeframe you chose and the last zoom.
 
+### About ANT prices
+
+ANT prices come from the chart API behind Yahoo Finance's website. Yahoo doesn't document it or promise to keep it, so it can change or stop answering without notice. If it does, only ANT stops updating; BTC comes from Kraken and keeps working.
+
+- **Freshness.** On ANT's first trading day, Yahoo's price was a few seconds behind Nasdaq's own real-time quote.
+- **Regular session only.** The ticker and the chart ignore pre-market and after-hours trades.
+- **History.** The chart goes back 5 days at 1m, 60 days at 15m and 2 years at 4h, and never before 19 November 2026, when ANT started trading.
+- **Rate limits.** Yahoo doesn't publish any. At the default 5-second refresh, the app asks for the price 720 times an hour. If Yahoo refuses with HTTP 429, the app retries less often, the price goes stale, and the tooltip names the cause, for example `Yahoo Finance answered HTTP 429`. Running several copies behind one internet connection makes this more likely.
+- **Terms.** Yahoo's terms allow personal use and forbid redistributing its data. The app fetches prices only for the person running it and passes them to no one else.
+
 ## Settings and reset
 
 Settings are saved as soon as you change them. A saved position that no longer fits a screen is pulled back into the visible area.
