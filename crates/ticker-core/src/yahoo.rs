@@ -10,12 +10,12 @@ use crate::time::Timestamp;
 const CHART_URL: &str = "https://query1.finance.yahoo.com/v8/finance/chart/ANT";
 pub const QUOTE_URL: &str = "https://query1.finance.yahoo.com/v8/finance/chart/ANT?interval=1d&range=1d";
 
-/// The shortest range that still holds `MAX_CANDLES` rows for the timeframe, with pre- and post-market trades where
-/// Yahoo has them.
+/// The shortest range that still holds `MAX_CANDLES` rows for the timeframe. Regular-session trades only, like the
+/// quote, so the quote the chart adds to the newest candle is a price from that candle's session.
 pub fn chart_url(timeframe: Timeframe) -> String {
     let query = match timeframe {
-        Timeframe::M1 => "interval=1m&range=5d&includePrePost=true",
-        Timeframe::M15 => "interval=15m&range=60d&includePrePost=true",
+        Timeframe::M1 => "interval=1m&range=5d",
+        Timeframe::M15 => "interval=15m&range=60d",
         Timeframe::H4 => "interval=4h&range=2y",
     };
     format!("{CHART_URL}?{query}")

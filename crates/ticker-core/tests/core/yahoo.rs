@@ -176,8 +176,8 @@ fn keeps_the_newest_720_candles() {
 fn urls() {
     let chart = "https://query1.finance.yahoo.com/v8/finance/chart/ANT";
     assert_eq!(yahoo::QUOTE_URL, format!("{chart}?interval=1d&range=1d"));
-    assert_eq!(yahoo::chart_url(Timeframe::M1), format!("{chart}?interval=1m&range=5d&includePrePost=true"));
-    assert_eq!(yahoo::chart_url(Timeframe::M15), format!("{chart}?interval=15m&range=60d&includePrePost=true"));
+    assert_eq!(yahoo::chart_url(Timeframe::M1), format!("{chart}?interval=1m&range=5d"));
+    assert_eq!(yahoo::chart_url(Timeframe::M15), format!("{chart}?interval=15m&range=60d"));
     assert_eq!(yahoo::chart_url(Timeframe::H4), format!("{chart}?interval=4h&range=2y"));
 }
 
