@@ -24,16 +24,19 @@ impl CandleChart {
         43_200.0,
     ];
 
-    /// Multiples of a 1, 2 or 5 step inside the price domain, labelled in whole dollars.
+    /// Multiples of a 1, 2 or 5 step inside the price domain, labelled in whole dollars, or with the cents a step under
+    /// a dollar needs.
     pub fn price_ticks(&self) -> Vec<Tick<f64>> {
         let span = self.price_domain.end() - self.price_domain.start();
-        let magnitude = 10f64.powf((span / Self::MINIMUM_TICKS).log10().floor());
+        let exponent = (span / Self::MINIMUM_TICKS).log10().floor();
+        let magnitude = 10f64.powf(exponent);
         let Some(step) = step(&self.price_domain, &[1.0, 2.0, 5.0].map(|digit| digit * magnitude)) else {
             return Vec::new();
         };
+        let decimals = (-exponent).clamp(0.0, 2.0) as u8;
         ticks(&self.price_domain, step, 0.0)
             .into_iter()
-            .map(|price| Tick { value: price, label: TickerDisplay::price(price, 0) })
+            .map(|price| Tick { value: price, label: TickerDisplay::price(price, decimals) })
             .collect()
     }
 

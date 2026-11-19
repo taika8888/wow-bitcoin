@@ -1,30 +1,32 @@
 ---
 name: verify-ticker-model
-description: Model-check the Windows BTC ticker's core state machines (App::handle and OverlayState::reduce in crates/ticker-core) over every interleaving of inputs. Use before committing any change to crates/ticker-core/src/app.rs, chart.rs, feed.rs, overlay.rs, market.rs or kraken.rs, when a model check in cargo test fails, or when a change is meant to alter fetch, schedule, click, drag, zoom, save or render behavior.
+description: Model-check the Windows BTC ticker's core state machines (App::handle and OverlayState::reduce in crates/ticker-core) over every interleaving of inputs. Use before committing any change to crates/ticker-core/src/app.rs, chart.rs, feed.rs, overlay.rs, market.rs, source.rs, kraken.rs or yahoo.rs, when a model check in cargo test fails, or when a change is meant to alter fetch, schedule, click, drag, zoom, save or render behavior.
 ---
 
 # Verify the ticker's state machines
 
-The Windows ticker's core is two pure state machines. `App::handle` takes every input the shell sends (pointer events, ticks, wakes, fetch results, settings file changes) and returns the effects the shell runs (fetch, save, render). `OverlayState::reduce` decides clicks, drags, zoom, lock and visibility. Bugs there show up as duplicate requests to Kraken, a ticker that jumps or will not expand, a chart that zooms while hidden or skips a rung, settings written back over the user's edit, or a frozen display. All of these depend on input order, and unit tests reach few orders. The model checks try every order up to a bound, through the real code.
+The Windows ticker's core is two pure state machines. `App::handle` takes every input the shell sends (pointer events, ticks, wakes, fetch results, settings file changes) and returns the effects the shell runs (fetch, save, render). `OverlayState::reduce` decides clicks, drags, zoom, lock and visibility. Bugs there show up as duplicate requests to Kraken or Yahoo Finance, one market's price under the other's label, a ticker that jumps or will not expand, a chart that zooms while hidden or skips a rung, settings written back over the user's edit, or a frozen display. All of these depend on input order, and unit tests reach few orders. The model checks try every order up to a bound, through the real code.
 
 ## What is verified
 
 All of this lives in `crates/ticker-core/tests/model_check/`, in the `model_check` test target. Each check is one invariant, checked on every transition. Each line below gives the property and the harm it prevents.
 
-`app.rs`, the App check (14 invariants, in the `INVARIANTS` table):
+`app.rs`, the App check (16 invariants, in the `INVARIANTS` table):
 
-- **never two quote requests outstanding.** Prevents doubling the load on Kraken and racing two answers into the display.
-- **never two candle requests outstanding for one timeframe.** Prevents duplicate OHLC downloads and an older series overwriting a newer one.
+- **never two quote requests outstanding for the current market.** Prevents doubling the load on the source and racing two answers into the display. A market switch abandons the old market's request; the shell still runs it, and its answer is ignored.
+- **never two candle requests outstanding for one timeframe of the current market.** Prevents duplicate OHLC downloads and an older series overwriting a newer one.
 - **candles are fetched only for the visible expanded timeframe.** Prevents network traffic for a chart nobody can see, for example while WoW is in the background.
 - **a quote request starts exactly when one is due and none is out.** Prevents a frozen price (no fetch) and a hammering loop (early fetch), including after a refresh edit or a wake.
 - **the visible expanded chart's candles are requested exactly when due.** Prevents a chart that never loads, never refreshes, or never retries 10 s after a failure.
-- **a late or unknown result changes nothing.** Prevents a timed-out or duplicate answer from overwriting newer data or clearing the in-flight guard.
+- **every request goes to the current market's source.** Prevents fetching Kraken for ANT, or Yahoo Finance for BTC, after a switch.
+- **the shown quote and candles always belong to the current market.** Prevents a BTC price or BTC candles from showing under the ANT label, or the reverse, after a switch.
+- **a late or unknown result changes nothing.** Prevents a timed-out or duplicate answer, or one for a request a market switch abandoned, from overwriting newer data or clearing the in-flight guard.
 - **a click never moves the ticker.** Prevents the ticker jumping to the pointer when the user only meant to open the chart.
 - **only a drag or a settings edit moves the ticker.** Prevents the ticker drifting on ticks, results or focus changes.
 - **a locked ticker never drags.** Prevents Lock from being ignored mid-raid.
 - **a hidden overlay is never pressed or dragging.** Prevents a stale press from turning into a drag when the overlay reappears.
 - **SaveSettings is emitted iff an in-app input changed the settings, and carries the new settings.** Prevents lost settings (no save), useless disk writes (unchanged save), and writing back a file the user is editing (echo of `SettingsChanged`).
-- **the feed status is FeedStatus::derive of the last good quote, the start and the clock.** Prevents the ticker showing live for an old price, or offline while a good quote is fresh.
+- **the feed status is FeedStatus::derive of the last good quote, the feed's start and the clock.** Prevents the ticker showing live for an old price, or offline while a good quote is fresh. A market switch starts the feed over at the clock's time.
 - **Render is emitted iff the overlay, the feed status, the shown text or a chart load changed.** Prevents a screen that lags the state (missed render), a stale price whose age stops counting, and wasted redraws. The shown text is the ticker line and the tray tooltip.
 - **nothing is overdue, and with no quote out the next wake is no later than the next quote.** Prevents a shell timer armed by `App::next_wake` from sleeping past a due fetch or status change.
 
@@ -70,24 +72,24 @@ The reducer check covers its whole reachable state space and asserts `unexpanded
 The App check is bounded by depth. It starts from `App::new(Settings::default(), Frontmost::Wow, T0)`.
 
 - **Time.** Ticks at +1 s, +4 s and +16 s, and a wake at +1 s. Results arrive at the current clock. Times never go backwards.
-- **Results.** Each outstanding quote or candle request can succeed (one fixed Kraken body) or fail (`HttpOutcome::Unreachable`). The last delivered quote and candle result can also arrive again, as a late duplicate.
+- **Results.** Each outstanding quote or candle request can succeed (one fixed body per market, Kraken's for BTC and Yahoo Finance's for ANT, with different prices) or fail (`HttpOutcome::Unreachable`). The last delivered quote and candle result can also arrive again, as a late duplicate. A request a market switch abandoned is answered once, with its market's body.
 - **Settings.** In-app edits to refresh 2 s, refresh 30 s, or flipping onlyWhenWoWActive. A file change to refresh 2 s with the 4h timeframe.
-- **Full alphabet** (`every_interleaving_of_every_input_keeps_the_app_invariants`). Every input kind, including press, pointer moves of 2 px and 50 px, release over the body, outside, the 1m or 4h control, Lock, zoom in and out, and each of the 3 apps activated. Depth 7.
-- **Feed alphabet** (`every_deeper_interleaving_of_feed_inputs_keeps_the_app_invariants`). Drops pointer moves, outside and 4h releases, Lock, zoom, and activating the ticker, which the reducer check already covers exhaustively. Depth 8.
+- **Full alphabet** (`every_interleaving_of_every_input_keeps_the_app_invariants`). Every input kind, including press, pointer moves of 2 px and 50 px, release over the body, outside, the 1m or 4h control, Lock, zoom in and out, each of the 3 apps activated, and a market switch both as an in-app edit and as a file change. Depth 7.
+- **Feed alphabet** (`every_deeper_interleaving_of_feed_inputs_keeps_the_app_invariants`). Drops pointer moves, outside and 4h releases, Lock, zoom, and activating the ticker, which the reducer check already covers exhaustively, and the market switch, which starts the feed over and so adds no deeper fetch history. Depth 8.
 
-Measured on this machine at the sync commit, inside `verify.ps1`'s `cargo test` run:
+Measured on this machine with `cargo test -p ticker-core --test model_check -- --show-output`, after the market switch was added. The same command on the commit before it measured 12.2 s and 17.2 s for the two App checks in the same session, against 5.2 s and 7.0 s recorded at the sync commit, so the machine ran about 2.4 times slower that day:
 
 | Check | States | Transitions | Scope | Time |
 | --- | --- | --- | --- | --- |
 | overlay | 3,456 | 89,856 | exhaustive, longest path 13 | 0.2 s |
-| app (full) | 163,494 | 1,047,044 | depth 7, 119,271 states at the bound | 5.2 s |
-| app feed | 291,029 | 1,322,762 | depth 8, 208,978 states at the bound | 7.0 s |
+| app (full) | 421,135 | 2,566,975 | depth 7, 322,712 states at the bound | 30.3 s |
+| app feed | 295,246 | 1,335,230 | depth 8, 212,376 states at the bound | 17.7 s |
 
-The whole `model_check` target takes about 7 s once built, because the tests run in parallel. `cargo test` prints these lines as `model check ...`. Run it with `-- --show-output` to see them.
+The whole `model_check` target takes as long as its slowest check once built, because the tests run in parallel. `cargo test` prints these lines as `model check ...`. Run it with `-- --show-output` to see them.
 
 Out of scope, so a pass says nothing about:
 
-- HTTP statuses other than 200, malformed bodies, and other prices (`tests/core/kraken.rs` covers parsing);
+- HTTP statuses other than 200, malformed bodies, and other prices (`tests/core/kraken.rs` and `tests/core/yahoo.rs` cover parsing);
 - refresh values other than 2, 5 and 30 s, and paths longer than the depth bound;
 - clocks that go backwards (`advance` clamps them, unchecked here);
 - layout, placement, display formatting, `Settings::decode`, `Snapshot`, and `CandleChart` geometry, including which candles a zoom shows and how they merge into the bar budget (`tests/core/` covers these);
@@ -161,6 +163,8 @@ Each checker keeps its own records (`World` in `app.rs` and `overlay.rs`). These
 | saves-unchanged-settings | src/app.rs | save only on change | SaveSettings is emitted iff an in-app input changed the settings, and carries the new settings | PASS |
 | no-render-for-chart-loads | src/app.rs | render on chart load change | Render is emitted iff the overlay, the feed status, the shown text or a chart load changed | PASS |
 | stale-age-not-redrawn | src/app.rs | render when the shown text changes | Render is emitted iff the overlay, the feed status, the shown text or a chart load changed | PASS, by hand with the same cargo command, added after the sync commit |
+| market-switch-keeps-the-quote | src/app.rs | a switch starts the feed over | the shown quote and candles always belong to the current market | PASS, by hand, added with the market switch |
+| market-switch-fetches-from-the-old-source | src/app.rs | requests follow the market | every request goes to the current market's source | PASS, by hand, added with the market switch |
 | click-moves-ticker | src/overlay.rs | click does not move | a click never moves the ticker | PASS |
 | locked-check-dropped-from-pointer-move | src/overlay.rs | lock test on pointer move | a locked press released over the body is a click, however far the pointer moved | PASS |
 | locked-ticker-drags | src/overlay.rs | both lock tests | a locked ticker never drags | PASS |
@@ -177,7 +181,7 @@ Each checker keeps its own records (`World` in `app.rs` and `overlay.rs`). These
 
 | Check | Covers |
 | --- | --- |
-| App (`tests/model_check/app.rs`) | `src/app.rs`: `App::new`, `App::handle`, `App::next_wake`, `App::status`, `App::display`, `App::tooltip`, `App::chart_load`, `advance`, `issue`. `src/display.rs`: `TickerDisplay::{new, tooltip, age}`. `src/chart.rs`: `ChartFeed::{wanted, due, due_at, begin, awaits, finish}`, `CandleLoad::{due_at, is_loading, failure}`. `src/feed.rs`: `FeedSchedule::{started, finished, woke, next_start, is_due, delay, request_timeout}`, `FeedStatus::derive`. `src/kraken.rs`: `quote_from`, `candles_from` (on the two fixed bodies and `Unreachable`). `src/overlay.rs`: `OverlayState::reduce`, `is_visible`, `mode`. `src/market.rs`: `Zoom::stepped`. `src/settings.rs`: `Settings::clamped`. |
+| App (`tests/model_check/app.rs`) | `src/app.rs`: `App::new`, `App::handle`, `App::next_wake`, `App::status`, `App::display`, `App::tooltip`, `App::chart_load`, `advance`, `issue`. `src/display.rs`: `TickerDisplay::{new, tooltip, age}`. `src/chart.rs`: `ChartFeed::{wanted, due, due_at, begin, awaits, finish}`, `CandleLoad::{due_at, is_loading, failure}`. `src/feed.rs`: `FeedSchedule::{started, finished, woke, next_start, is_due, delay, request_timeout}`, `FeedStatus::derive`. `src/source.rs`: `Source::{quote_from, candles_from, quote_url, candles_url}`, with `src/kraken.rs` and `src/yahoo.rs` parsing one fixed quote and candle body each, and `Unreachable`. `src/market.rs`: `Market::source`. `src/overlay.rs`: `OverlayState::reduce`, `is_visible`, `mode`. `src/market.rs`: `Zoom::stepped`. `src/settings.rs`: `Settings::clamped`. |
 | Reducer (`tests/model_check/overlay.rs`) | `src/overlay.rs`: `OverlayState::{new, reduce, mode, is_visible, drag, settings}`, the `Zoom` event included. `src/market.rs`: `Zoom::stepped`. `src/settings.rs`: `Settings::clamped`. |
 | Engine (`tests/model_check/engine.rs`, `words.rs`) | The search, fingerprints and counterexample wording, shared by both checks. |
 | Mutants (`windows/scripts/mutants.ps1`) | The rows above. |

@@ -6,3 +6,4 @@ mod fixtures;
 mod ink;
 mod kraken;
 mod placement;
+mod yahoo;

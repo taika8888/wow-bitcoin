@@ -3,11 +3,12 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use ticker_core::kraken::{self, CANDLES_TIMEOUT, TICKER_URL};
+use ticker_core::kraken::{self, TICKER_URL};
+use ticker_core::source::CANDLES_TIMEOUT;
 use ticker_core::{
-    App, CandleLoad, ChartNotice, Effect, FeedStatus, FetchFailure, Frontmost, HttpOutcome, Input, KrakenError,
-    OverlayEvent, OverlayMode, PressTarget, Quote, Rect, RequestId, ScreenPoint, Settings, Snapshot, SnapshotWindow,
-    Timeframe, Timestamp, Tone, Zoom, ZoomStep,
+    App, BodyError, CandleLoad, ChartNotice, Effect, FeedStatus, FetchFailure, FetchProblem, Frontmost, HttpOutcome,
+    Input, Market, OverlayEvent, OverlayMode, PressTarget, Quote, Rect, RequestId, ScreenPoint, Settings, Snapshot,
+    SnapshotWindow, Source, Timeframe, Timestamp, Tone, Zoom, ZoomStep, yahoo,
 };
 
 use crate::chart::{DEFAULT_BUDGET, T0};
@@ -222,7 +223,7 @@ fn the_quote_turns_stale_on_the_tick_that_crosses_three_missed_refreshes() {
     shell.tick(0.0);
     let effects = shell.finish_quote(price_body(80482.4), 0.0);
     assert!(renders(&effects));
-    let quote = Quote { price: 80482.4, open_24h: 80000.0, fetched_at: T0 };
+    let quote = Quote { price: 80482.4, reference: 80000.0, fetched_at: T0 };
     assert_eq!(shell.app.status(), FeedStatus::Live(quote));
     shell.tick(5.0);
     assert!(!renders(&shell.tick(15.0)), "nothing on screen changes at exactly the threshold");
@@ -254,7 +255,10 @@ fn a_failed_quote_says_why_until_one_succeeds() {
     shell.finish_quote(price_body(80482.4), 0.0);
     shell.tick(5.0);
     shell.finish_quote(HttpOutcome::Unreachable, 5.0);
-    assert_eq!(shell.app.quote_failure(), Some(&FetchFailure::Unreachable));
+    assert_eq!(
+        shell.app.quote_failure(),
+        Some(&FetchFailure { source: Source::Kraken, problem: FetchProblem::Unreachable })
+    );
     assert_eq!(shell.app.tooltip(), "BTC Ticker · $80,482 · live", "one failure does not make the price wrong");
     shell.tick(10.0);
     let effects = shell.finish_quote(answered(r#"{"error":["EService:Unavailable"]}"#), 10.0);
@@ -462,7 +466,11 @@ fn the_placeholder_names_what_went_wrong() {
         assert_eq!(notice, Some(ChartNotice::Placeholder(format!("{message}, retrying"))));
     }
     assert_eq!(
-        FetchFailure::Rejected(KrakenError::InvalidValue("row 3".to_string())).message(),
+        FetchFailure {
+            source: Source::Kraken,
+            problem: FetchProblem::Rejected(BodyError::InvalidValue("row 3".to_string()))
+        }
+        .message(),
         "Kraken sent data this app cannot read"
     );
 }
@@ -527,7 +535,7 @@ fn the_newest_candle_and_the_last_price_follow_each_quote_taken_inside_it() {
     shell.tick(26.0);
     assert_eq!(
         shell.app.status(),
-        FeedStatus::Stale(Quote { price: 79900.0, open_24h: 80000.0, fetched_at: at(10.0) })
+        FeedStatus::Stale(Quote { price: 79900.0, reference: 80000.0, fetched_at: at(10.0) })
     );
     assert_eq!(newest(&shell).0, 79900.0, "a stale quote is still newer than the candles");
 }
@@ -594,4 +602,92 @@ fn the_kraken_urls_in_fetch_effects_name_the_timeframe() {
         url: kraken::ohlc_url(Timeframe::H4),
         timeout: CANDLES_TIMEOUT
     }));
+}
+
+fn yahoo_quote_body() -> HttpOutcome {
+    answered(fixtures::YAHOO_QUOTE)
+}
+
+fn fetches_quote_from(effects: &[Effect], wanted: &str) -> bool {
+    effects.iter().any(|effect| matches!(effect, Effect::FetchQuote { url, .. } if *url == wanted))
+}
+
+#[test]
+fn an_ant_ticker_fetches_from_yahoo_and_shows_cents_against_the_previous_close() {
+    let mut shell = Shell::new(Settings { market: Market::Ant, ..Settings::default() });
+    let effects = shell.tick(0.0);
+    let request = quote_request(&effects).unwrap();
+    assert_eq!(effects[0], Effect::FetchQuote { request, url: yahoo::QUOTE_URL, timeout: Duration::from_secs(5) });
+    assert_eq!(shell.app.display().text(), "ANT ...");
+    shell.finish_quote(yahoo_quote_body(), 1.0);
+    assert_eq!(shell.app.display().text(), "ANT $95.76  +15.37%");
+    assert_eq!(shell.app.tooltip(), "BTC Ticker · ANT · $95.76 · live");
+    let effects = shell.click(PressTarget::Body);
+    let (timeframe, request) = candle_request(&effects).unwrap();
+    let url = yahoo::chart_url(Timeframe::M15);
+    assert!(effects.contains(&Effect::FetchCandles { request, timeframe, url, timeout: CANDLES_TIMEOUT }));
+    shell.finish_candles(answered(fixtures::YAHOO_15M), 2.0);
+    assert_eq!(shell.load(Timeframe::M15).series().map(|series| series.candles.len()), Some(7));
+}
+
+#[test]
+fn switching_markets_drops_everything_fetched_for_the_old_one() {
+    let mut shell = expanded_on(Timeframe::M15);
+    shell.finish_candles(candles_body(), 1.0);
+    let old_quote = quote_request(&shell.tick(5.0)).expect("the next BTC quote is out");
+    assert!(shell.app.status().quote().is_some());
+    assert!(shell.app.chart(DEFAULT_BUDGET).is_some());
+
+    let ant = Settings { market: Market::Ant, ..*shell.app.settings() };
+    let effects = shell.overlay(OverlayEvent::SettingsEdited(ant));
+    assert_eq!(saved(&effects), [ant]);
+    assert!(renders(&effects));
+    assert_eq!(shell.app.status(), FeedStatus::Loading, "no BTC price under the ANT label");
+    assert_eq!(shell.app.display().text(), "ANT ...");
+    assert_eq!(shell.app.chart(DEFAULT_BUDGET), None, "no BTC candles under the ANT label");
+    assert_ne!(quote_request(&effects), Some(old_quote));
+    assert!(fetches_quote_from(&effects, yahoo::QUOTE_URL), "the ANT quote starts at once");
+    let (timeframe, _) = candle_request(&effects).expect("the ANT chart starts at once");
+    assert_eq!(timeframe, Timeframe::M15);
+
+    let before = shell.app.clone();
+    let late = Input::QuoteFinished { request: old_quote, outcome: price_body(80100.0), now: at(5.0) };
+    assert!(shell.app.handle(late).is_empty(), "the old market's answer is ignored");
+    assert_eq!(shell.app, before);
+
+    shell.finish_quote(yahoo_quote_body(), 6.0);
+    assert_eq!(shell.app.display().text(), "ANT $95.76  +15.37%");
+    shell.finish_candles(answered(fixtures::YAHOO_15M), 6.0);
+    let newest = shell.app.chart(DEFAULT_BUDGET).map(|chart| chart.last_price);
+    assert_eq!(newest.map(|price| (price * 100.0).round() / 100.0), Some(95.37));
+}
+
+#[test]
+fn a_market_change_in_the_file_switches_without_saving_back() {
+    let mut shell = Shell::new(Settings::default());
+    shell.tick(0.0);
+    shell.finish_quote(price_body(80000.0), 0.0);
+    let effects = shell.send(Input::SettingsChanged(Settings { market: Market::Ant, ..Settings::default() }));
+    assert!(saved(&effects).is_empty());
+    assert_eq!(shell.app.status(), FeedStatus::Loading);
+    assert!(fetches_quote_from(&effects, yahoo::QUOTE_URL));
+    shell.finish_quote(HttpOutcome::Unreachable, 1.0);
+    let message = shell.app.quote_failure().map(FetchFailure::message);
+    assert_eq!(message.as_deref(), Some("Yahoo Finance is not answering"));
+}
+
+#[test]
+fn switching_back_starts_the_first_market_over() {
+    let mut shell = Shell::new(Settings::default());
+    shell.tick(0.0);
+    shell.finish_quote(price_body(80000.0), 0.0);
+    shell.tick(3.0);
+    shell.overlay(OverlayEvent::SettingsEdited(Settings { market: Market::Ant, ..Settings::default() }));
+    let effects = shell.overlay(OverlayEvent::SettingsEdited(Settings::default()));
+    assert_eq!(shell.app.status(), FeedStatus::Loading, "the BTC price from before the switch is not brought back");
+    assert!(fetches_quote_from(&effects, TICKER_URL));
+    shell.tick(18.0);
+    assert_eq!(shell.app.status(), FeedStatus::Loading);
+    shell.tick(18.001);
+    assert_eq!(shell.app.status(), FeedStatus::Offline, "offline three refreshes after the switch back");
 }

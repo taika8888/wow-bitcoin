@@ -25,13 +25,13 @@ $env:RUSTFLAGS = '--cap-lints=warn'
 $env:CARGO_TARGET_DIR = Join-Path $workspace 'target\mutants-build'
 
 $mutants = @(
-    @{ Name = 'quote-in-flight-guard-dropped'; File = 'src\app.rs'; Expect = 'never two quote requests outstanding'
-        Edits = @(@{ Find = 'if self.quote_in_flight.is_none() && self.schedule.is_due(refresh_seconds, self.now) {'
-                Replace = 'if self.schedule.is_due(refresh_seconds, self.now) {' }) }
+    @{ Name = 'quote-in-flight-guard-dropped'; File = 'src\app.rs'; Expect = 'never two quote requests outstanding for the current market'
+        Edits = @(@{ Find = 'if self.feed.quote_in_flight.is_none() && self.feed.schedule.is_due(refresh_seconds, self.now) {'
+                Replace = 'if self.feed.schedule.is_due(refresh_seconds, self.now) {' }) }
     @{ Name = 'stale-quote-id-accepted'; File = 'src\app.rs'; Expect = 'a late or unknown result changes nothing'
-        Edits = @(@{ Find = 'if self.quote_in_flight != Some(request) {'; Replace = 'if self.quote_in_flight.map(|_| request).is_none() {' }) }
+        Edits = @(@{ Find = 'if self.feed.quote_in_flight != Some(request) {'; Replace = 'if self.feed.quote_in_flight.map(|_| request).is_none() {' }) }
     @{ Name = 'stale-candle-id-accepted-while-loading'; File = 'src\app.rs'; Expect = 'a late or unknown result changes nothing'
-        Edits = @(@{ Find = 'if !self.charts.awaits(timeframe, request) {'; Replace = 'if !self.chart_load(timeframe).is_loading() {' }) }
+        Edits = @(@{ Find = 'if !self.feed.charts.awaits(timeframe, request) {'; Replace = 'if !self.chart_load(timeframe).is_loading() {' }) }
     @{ Name = 'request-ids-reused'; File = 'src\app.rs'; Expect = 'a late or unknown result changes nothing'
         Edits = @(@{ Find = 'self.requests_issued += 1;'; Replace = '' }) }
     @{ Name = 'candles-fetched-while-hidden'; File = 'src\chart.rs'; Expect = 'candles are fetched only for the visible expanded timeframe'
@@ -39,16 +39,16 @@ $mutants = @(
     @{ Name = 'candles-fetched-while-collapsed'; File = 'src\chart.rs'; Expect = 'candles are fetched only for the visible expanded timeframe'
         Edits = @(@{ Find = 'let OverlayMode::Expanded(timeframe) = overlay.mode() else { return None };'
                 Replace = 'let OverlayMode::Expanded(timeframe) = OverlayMode::Expanded(overlay.settings().timeframe) else { return None };' }) }
-    @{ Name = 'candle-in-flight-guard-dropped'; File = 'src\chart.rs'; Expect = 'never two candle requests outstanding for one timeframe'
+    @{ Name = 'candle-in-flight-guard-dropped'; File = 'src\chart.rs'; Expect = 'never two candle requests outstanding for one timeframe of the current market'
         Edits = @(@{ Find = '(overlay.is_visible() && !load.is_loading())'; Replace = '(overlay.is_visible())' }) }
     @{ Name = 'candle-failure-kept-after-success'; File = 'src\chart.rs'; Expect = "the visible expanded chart's candles are requested exactly when due"
         Edits = @(@{ Find = 'load.failure = None;'; Replace = '' }) }
     @{ Name = 'refresh-edit-not-rescheduled'; File = 'src\app.rs'; Expect = 'a quote request starts exactly when one is due and none is out'
-        Edits = @(@{ Find = 'if self.quote_in_flight.is_none() && self.schedule.is_due(refresh_seconds, self.now) {'
-                Replace = 'if self.quote_in_flight.is_none() && self.schedule.is_due(refresh_seconds, self.now) && !edited_in_app {' }) }
+        Edits = @(@{ Find = 'if self.feed.quote_in_flight.is_none() && self.feed.schedule.is_due(refresh_seconds, self.now) {'
+                Replace = 'if self.feed.quote_in_flight.is_none() && self.feed.schedule.is_due(refresh_seconds, self.now) && !edited_in_app {' }) }
     @{ Name = 'wake-keeps-backoff'; File = 'src\app.rs'; Expect = 'a quote request starts exactly when one is due and none is out'
-        Edits = @(@{ Find = 'self.schedule.woke();'; Replace = '' }) }
-    @{ Name = 'tick-does-not-advance-time'; File = 'src\app.rs'; Expect = 'the feed status is FeedStatus::derive of the last good quote, the start and the clock'
+        Edits = @(@{ Find = 'self.feed.schedule.woke();'; Replace = '' }) }
+    @{ Name = 'tick-does-not-advance-time'; File = 'src\app.rs'; Expect = "the feed status is FeedStatus::derive of the last good quote, the feed's start and the clock"
         Edits = @(@{ Find = 'Input::Tick(now) => self.advance(now),'; Replace = 'Input::Tick(_) => {}' }) }
     @{ Name = 'settings-file-written-back'; File = 'src\app.rs'; Expect = 'SaveSettings is emitted iff an in-app input changed the settings, and carries the new settings'
         Edits = @(@{ Find = 'if edited_in_app && self.overlay.settings() != overlay_before.settings() {'
@@ -60,7 +60,12 @@ $mutants = @(
                 Replace = 'if self.overlay != overlay_before || self.shown() != shown_before {' }) }
     @{ Name = 'stale-age-not-redrawn'; File = 'src\app.rs'; Expect = 'Render is emitted iff the overlay, the feed status, the shown text or a chart load changed'
         Edits = @(@{ Find = '(self.status(), self.display(), self.tooltip())'
-                Replace = '(self.status(), TickerDisplay::new(&self.status(), self.settings(), self.started_at), String::new())' }) }
+                Replace = '(self.status(), TickerDisplay::new(&self.status(), self.settings(), self.feed.started_at), String::new())' }) }
+    @{ Name = 'market-switch-keeps-the-quote'; File = 'src\app.rs'; Expect = 'the shown quote and candles always belong to the current market'
+        Edits = @(@{ Find = 'self.feed = Feed::new(market, self.now);'
+                Replace = 'self.feed = Feed { last_good: self.feed.last_good, ..Feed::new(market, self.now) };' }) }
+    @{ Name = 'market-switch-fetches-from-the-old-source'; File = 'src\app.rs'; Expect = "every request goes to the current market's source"
+        Edits = @(@{ Find = 'let source = self.feed.market.source();'; Replace = 'let source = overlay_before.settings().market.source();' }) }
     @{ Name = 'click-moves-ticker'; File = 'src\overlay.rs'; Expect = 'a click never moves the ticker'
         Edits = @(@{ Find = '(DragPhase::Pressed, PressTarget::Body) => next.expanded = !self.expanded,'
                 Replace = '(DragPhase::Pressed, PressTarget::Body) => { next.expanded = !self.expanded; next.settings.position = Some(ticker_origin) }' }) }

@@ -92,6 +92,20 @@ fn the_price_step_is_the_coarsest_one_two_or_five_that_leaves_three_ticks() {
     assert_eq!(labels(&priced(80_100.0, 86_900.0).price_ticks()), ["$82,000", "$84,000", "$86,000"]);
 }
 
+/// A share price moves in cents, so a step under a dollar shows the digits that tell its ticks apart.
+#[test]
+fn a_step_under_a_dollar_labels_the_cents_it_needs() {
+    assert_eq!(
+        labels(&priced(95.05, 96.4).price_ticks()),
+        ["$95.2", "$95.4", "$95.6", "$95.8", "$96.0", "$96.2", "$96.4"]
+    );
+    assert_eq!(
+        labels(&priced(95.301, 95.449).price_ticks()),
+        ["$95.32", "$95.34", "$95.36", "$95.38", "$95.40", "$95.42", "$95.44"]
+    );
+    assert_eq!(labels(&priced(83.0, 115.0).price_ticks()), ["$90", "$100", "$110"]);
+}
+
 #[test]
 fn a_four_month_chart_gets_monthly_ticks_not_weekly_ones() {
     let candles = parse_candles(fixtures::OHLC_240.as_bytes()).unwrap();
