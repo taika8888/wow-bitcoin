@@ -91,13 +91,13 @@ The app also remembers the last timeframe you chose and the last zoom.
 
 ### About ANT prices
 
-ANT prices come from the chart API behind Yahoo Finance's website. Yahoo doesn't document it or promise to keep it, so it can change or stop answering without notice. If it does, only ANT stops updating; BTC comes from Kraken and keeps working.
+ANT prices come from Yahoo Finance's chart data feed. Yahoo doesn't offer it as a documented public service, so it can change or stop working without notice. If it does, ANT stops updating. BTC uses a separate feed from Kraken and keeps working.
 
 - **Freshness.** On ANT's first trading day, Yahoo's price was a few seconds behind Nasdaq's own real-time quote.
 - **Regular session only.** The ticker and the chart ignore pre-market and after-hours trades.
-- **History.** The chart goes back 5 days at 1m, 60 days at 15m and 2 years at 4h, and never before 19 November 2026, when ANT started trading.
-- **Rate limits.** Yahoo doesn't publish any. At the default 5-second refresh, the app asks for the price 720 times an hour. If Yahoo refuses with HTTP 429, the app retries less often, the price goes stale, and the tooltip names the cause, for example `Yahoo Finance answered HTTP 429`. Running several copies behind one internet connection makes this more likely.
-- **Terms.** Yahoo's terms allow personal use and forbid redistributing its data. The app fetches prices only for the person running it and passes them to no one else.
+- **History.** The chart holds up to 720 candles: about two trading days at 1m, about five weeks at 15m, and more than a year at 4h. Nothing goes back before 19 November 2026, when ANT started trading.
+- **Rate limits.** Yahoo doesn't publish any. At the default 5-second refresh, one copy of the app asks for the ANT price about 720 times an hour, and an open chart adds more requests. Several copies on one internet connection add up. If Yahoo refuses requests, for example with HTTP 429 (too many requests), the app waits longer between attempts after the second failure in a row, up to a minute apart at the default refresh. After three missed refreshes the price shows as stale, and the tooltip names the cause, for example `Yahoo Finance answered HTTP 429`.
+- **Terms.** [Yahoo's Terms of Service](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html) forbid commercial reuse and accessing its services other than through the interface Yahoo provides. The app is free and sells nothing, but it reads the feed directly, so ANT prices work only as long as Yahoo tolerates that.
 
 ## Settings and reset
 
