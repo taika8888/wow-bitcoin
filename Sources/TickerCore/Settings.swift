@@ -35,6 +35,7 @@ public struct Settings: Codable, Hashable, Sendable {
     public static let chartWidthRange: ClosedRange<Double> = 240...900
     public static let chartHeightRange: ClosedRange<Double> = 120...600
 
+    public var market = Market.btc
     public var fontSize: Double = 15
     public var opacity: Double = 0.55
     public var textColor = RGBA(red: 1, green: 1, blue: 1)

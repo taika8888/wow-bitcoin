@@ -14,12 +14,14 @@ private func fetches(_ reply: CoreReply) -> [CoreEffect.Fetch] {
 @Suite struct BridgeTests {
     @Test func anExistingUserDefaultsBlobLoadsAndRoundTripsIdentically() throws {
         let json = #"{"fontSize":23,"opacity":0.4,"textColor":{"red":0.8,"green":0.7,"blue":0.6,"alpha":0.5},"upColor":{"red":0.1,"green":0.9,"blue":0.2,"alpha":1},"downColor":{"red":0.9,"green":0.1,"blue":0.2,"alpha":0.8},"decimals":2,"showLabel":false,"showChange":false,"locked":true,"refreshSeconds":17,"onlyWhenWoWActive":true,"position":{"x":-120,"y":840},"timeframe":"h4","zoom":4,"chartWidth":500,"chartHeight":300}"#
-        let old = try JSONDecoder().decode(Settings.self, from: Data(json.utf8))
+        // A blob saved before the market switch has no market key, and loads as BTC.
+        let current = json.replacingOccurrences(of: #"{"fontSize""#, with: #"{"market":"btc","fontSize""#)
+        let old = try JSONDecoder().decode(Settings.self, from: Data(current.utf8))
         let app = try RustApp(settingsJSON: json, frontmost: .wow, now: 1000)
         let view = try app.view()
         #expect(view.settings == old)
         let saved = try JSONSerialization.jsonObject(with: Data(view.settings.json.utf8)) as? NSDictionary
-        #expect(saved == (try JSONSerialization.jsonObject(with: Data(json.utf8)) as? NSDictionary))
+        #expect(saved == (try JSONSerialization.jsonObject(with: Data(current.utf8)) as? NSDictionary))
         let reloaded = try RustApp(settingsJSON: view.settings.json, frontmost: .other, now: 1000)
         #expect(try reloaded.view().settings == old)
         #expect(try !reloaded.view().overlayState.isVisible)

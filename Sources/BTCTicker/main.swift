@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
     private var overlay: OverlayController!
     private var statusItem: NSStatusItem!
     private let lockItem = NSMenuItem(title: "Lock Position", action: #selector(toggleLock), keyEquivalent: "")
+    private let marketItem = NSMenuItem(title: "Show ANT", action: #selector(switchMarket), keyEquivalent: "")
     private var settingsWindow: NSWindow?
     /// The app that was frontmost when Settings opened, usually the game, which gets focus back when Settings closes.
     private var returnTo: NSRunningApplication?
@@ -65,6 +66,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         lockItem.title = model.overlay.settings.locked ? "Unlock Position" : "Lock Position"
+        marketItem.title = "Show \(model.overlay.settings.market.other.label)"
     }
 
     private func makeMenu() -> NSMenu {
@@ -73,6 +75,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
         menu.addItem(withTitle: "Settings…", action: #selector(openSettings), keyEquivalent: ",").target = self
         lockItem.target = self
         menu.addItem(lockItem)
+        marketItem.target = self
+        menu.addItem(marketItem)
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit BTC Ticker", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         return menu
@@ -90,6 +94,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWind
 
     @objc private func toggleLock() {
         model.send(.toggleLock)
+    }
+
+    @objc private func switchMarket() {
+        var settings = model.overlay.settings
+        settings.market = settings.market.other
+        model.send(.settingsEdited(settings))
     }
 
     @objc private func openSettings() {
