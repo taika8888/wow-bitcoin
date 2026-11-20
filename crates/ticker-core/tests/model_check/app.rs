@@ -6,7 +6,7 @@
 
 use ticker_core::{
     App, DragPhase, Effect, FeedSchedule, FeedStatus, Frontmost, HttpOutcome, Input, Market, OverlayEvent, OverlayMode,
-    PressTarget, Quote, RequestId, ScreenPoint, Settings, Timeframe, Timestamp, Zoom, ZoomStep,
+    PressTarget, Quote, RequestId, ScreenPoint, Session, Settings, Timeframe, Timestamp, Zoom, ZoomStep,
 };
 
 use crate::engine::{Model, Report, explore};
@@ -228,7 +228,7 @@ fn quote_body(market: Market) -> HttpOutcome {
     answered(match market {
         Market::Btc => format!(r#"{{"error":[],"result":{{"XXBTZUSD":{{"c":["{price}","0.1"],"o":"{reference}"}}}}}}"#),
         Market::Ant => format!(
-            r#"{{"chart":{{"result":[{{"meta":{{"regularMarketPrice":{price},"chartPreviousClose":{reference}}}}}],"error":null}}}}"#
+            r#"{{"chart":{{"result":[{{"meta":{{"regularMarketPrice":{price},"chartPreviousClose":{reference},"regularMarketTime":1795122001,"tradingPeriods":{{"regular":[[{{"start":1795098600,"end":1795122000}}]]}}}}}}],"error":null}}}}"#
         ),
     })
 }
@@ -399,7 +399,8 @@ impl Model for AppModel {
                 } else {
                     let (price, reference, _) = answers(market);
                     after.quote_failures = 0;
-                    after.last_good = Some(Quote { price, reference, fetched_at: after.clock });
+                    after.last_good =
+                        Some(Quote { price, reference, session: Session::Regular, fetched_at: after.clock });
                 }
             }
             Input::CandlesFinished { request, timeframe, outcome, .. } => {

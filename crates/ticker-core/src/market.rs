@@ -39,11 +39,23 @@ impl Market {
     }
 }
 
+/// When the quote's trade happened. Kraken trades around the clock, so a BTC quote is always `Regular`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Session {
+    Regular,
+    /// Pre-market, 04:00 to 09:30 New York time for ANT.
+    Pre,
+    /// After hours, 16:00 to 20:00 New York time for ANT, and on until the next pre-market trade.
+    Post,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Quote {
     pub price: f64,
-    /// What the change is measured from: Kraken's open for the day for BTC, the previous close for ANT.
+    /// What the change is measured from: Kraken's open for the day for BTC. For ANT, the previous close in the regular
+    /// session, and the last regular close outside it.
     pub reference: f64,
+    pub session: Session,
     pub fetched_at: Timestamp,
 }
 

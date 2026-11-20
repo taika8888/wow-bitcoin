@@ -2,7 +2,7 @@
 
 use serde_json::{Map, Value};
 
-use crate::market::{Candle, Quote, Timeframe};
+use crate::market::{Candle, Quote, Session, Timeframe};
 use crate::source::{BodyError, bounded, malformed, newest, positive};
 use crate::time::Timestamp;
 
@@ -21,7 +21,12 @@ pub fn parse_quote(body: &[u8], fetched_at: Timestamp) -> Result<Quote, BodyErro
         .and_then(Value::as_array)
         .and_then(|c| c.first())
         .ok_or_else(|| malformed("ticker has no c[0]"))?;
-    Ok(Quote { price: price(Some(last), "c[0]")?, reference: price(ticker.and_then(|t| t.get("o")), "o")?, fetched_at })
+    Ok(Quote {
+        price: price(Some(last), "c[0]")?,
+        reference: price(ticker.and_then(|t| t.get("o")), "o")?,
+        session: Session::Regular,
+        fetched_at,
+    })
 }
 
 /// Oldest first, the newest `MAX_CANDLES`. One bad row rejects the response.

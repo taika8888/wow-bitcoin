@@ -1,6 +1,6 @@
 use ticker_core::{
     BodyError, DisplaySegment, FeedSchedule, FeedStatus, FetchFailure, FetchProblem, Market, Quote, Rgba, ScreenPoint,
-    Settings, Source, TickerDisplay, Timeframe, Timestamp, Tone, Zoom,
+    Session, Settings, Source, TickerDisplay, Timeframe, Timestamp, Tone, Zoom,
 };
 
 fn kraken_failure(problem: FetchProblem) -> FetchFailure {
@@ -8,7 +8,7 @@ fn kraken_failure(problem: FetchProblem) -> FetchFailure {
 }
 
 const FETCHED_AT: Timestamp = Timestamp::from_unix_seconds(1_793_847_300.0);
-const QUOTE: Quote = Quote { price: 80482.4, reference: 80442.0, fetched_at: FETCHED_AT };
+const QUOTE: Quote = Quote { price: 80482.4, reference: 80442.0, session: Session::Regular, fetched_at: FETCHED_AT };
 
 #[test]
 fn price_formatting() {
@@ -61,7 +61,7 @@ fn label_and_change_are_optional() {
 
 #[test]
 fn flat_change_is_neutral() {
-    let flat = Quote { price: 80442.01, reference: 80442.0, fetched_at: FETCHED_AT };
+    let flat = Quote { price: 80442.01, reference: 80442.0, session: Session::Regular, fetched_at: FETCHED_AT };
     let display = TickerDisplay::new(&FeedStatus::Live(flat), &Settings::default(), FETCHED_AT);
     assert_eq!(display.text(), "BTC $80,442  0.00%");
     assert!(display.segments.iter().all(|segment| segment.tone == Tone::Neutral));
@@ -133,7 +133,7 @@ fn not_live_is_dimmed_and_labelled() {
 
 #[test]
 fn ant_shows_its_label_and_always_cents() {
-    let quote = Quote { price: 95.7, reference: 83.0, fetched_at: FETCHED_AT };
+    let quote = Quote { price: 95.7, reference: 83.0, session: Session::Regular, fetched_at: FETCHED_AT };
     for decimals in Settings::DECIMALS_RANGE {
         let settings = Settings { market: Market::Ant, decimals, ..Settings::default() };
         assert_eq!(TickerDisplay::new(&FeedStatus::Live(quote), &settings, FETCHED_AT).text(), "ANT $95.70  +15.30%");
@@ -144,6 +144,30 @@ fn ant_shows_its_label_and_always_cents() {
     assert_eq!(TickerDisplay::new(&FeedStatus::Loading, &ant, FETCHED_AT).text(), "...");
     let offline = TickerDisplay::new(&FeedStatus::Offline, &Settings { show_label: true, ..ant }, FETCHED_AT);
     assert_eq!(offline.text(), "ANT offline");
+}
+
+#[test]
+fn a_trade_outside_the_regular_session_is_tagged_after_the_price() {
+    let ant = Settings { market: Market::Ant, ..Settings::default() };
+    let later = FETCHED_AT.plus(200.0);
+    for (session, tag, words) in [(Session::Post, "AH", "after hours"), (Session::Pre, "PM", "pre-market")] {
+        let quote = Quote { price: 92.6, reference: 97.17, session, fetched_at: FETCHED_AT };
+        let live = TickerDisplay::new(&FeedStatus::Live(quote), &ant, FETCHED_AT);
+        assert_eq!(live.text(), format!("ANT $92.60  {tag}  -4.70%"));
+        assert_eq!(live.segments[1], DisplaySegment::new(format!("  {tag}"), Tone::Neutral));
+        assert_eq!(live.segments.last(), Some(&DisplaySegment::new("-4.70%", Tone::Down)));
+        let no_change = Settings { show_change: false, ..ant };
+        assert_eq!(
+            TickerDisplay::new(&FeedStatus::Live(quote), &no_change, FETCHED_AT).text(),
+            format!("ANT $92.60  {tag}")
+        );
+        let stale = TickerDisplay::new(&FeedStatus::Stale(quote), &ant, later);
+        assert_eq!(stale.text(), format!("ANT $92.60  {tag}  -4.70%  stale 3m"));
+        let tooltip = TickerDisplay::tooltip(&FeedStatus::Live(quote), None, &ant, FETCHED_AT);
+        assert_eq!(tooltip, format!("BTC Ticker · ANT · $92.60 · {words} · live"));
+        let tooltip = TickerDisplay::tooltip(&FeedStatus::Stale(quote), None, &ant, later);
+        assert_eq!(tooltip, format!("BTC Ticker · ANT · $92.60 · {words} · stale 3m"));
+    }
 }
 
 #[test]
@@ -301,7 +325,7 @@ fn without_a_quote_it_is_loading_then_offline() {
 
 #[test]
 fn a_quote_is_live_until_three_refreshes_are_missed() {
-    let quote = Quote { price: 1.0, reference: 1.0, fetched_at: START.plus(100.0) };
+    let quote = Quote { price: 1.0, reference: 1.0, session: Session::Regular, fetched_at: START.plus(100.0) };
     assert_eq!(FeedStatus::derive(Some(&quote), START, START.plus(100.0), 5.0), FeedStatus::Live(quote));
     assert_eq!(FeedStatus::derive(Some(&quote), START, START.plus(115.0), 5.0), FeedStatus::Live(quote));
     assert_eq!(FeedStatus::derive(Some(&quote), START, START.plus(115.001), 5.0), FeedStatus::Stale(quote));
@@ -345,7 +369,7 @@ fn one_failed_request_never_shows_the_quote_as_stale() {
                     fetched.push(clock);
                 }
             }
-            let quote = Quote { price: 1.0, reference: 1.0, fetched_at: fetched[0] };
+            let quote = Quote { price: 1.0, reference: 1.0, session: Session::Regular, fetched_at: fetched[0] };
             let span = fetched[1].seconds_since(fetched[0]);
             let first_stale =
                 (0..=(span * 10.0) as u32).map(|step| fetched[0].plus(f64::from(step) / 10.0)).find(|&now| {

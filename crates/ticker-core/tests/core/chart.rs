@@ -1,5 +1,5 @@
 use ticker_core::kraken::parse_candles;
-use ticker_core::{Candle, CandleChart, CandleSeries, Quote, Timeframe, Timestamp, Tone, Zoom, ZoomStep};
+use ticker_core::{Candle, CandleChart, CandleSeries, Quote, Session, Timeframe, Timestamp, Tone, Zoom, ZoomStep};
 
 use crate::fixtures;
 
@@ -146,7 +146,7 @@ fn fetched_inside_the_newest_candle() -> CandleSeries {
 }
 
 fn quote(price: f64, fetched_at: Timestamp) -> Quote {
-    Quote { price, reference: price, fetched_at }
+    Quote { price, reference: price, session: Session::Regular, fetched_at }
 }
 
 #[test]
@@ -260,4 +260,13 @@ fn stepping_walks_the_ladder_and_stops_at_its_ends() {
     assert_eq!(Zoom::Quarter.stepped(ZoomStep::In), Zoom::Quarter);
     assert_eq!(Zoom::All.stepped(ZoomStep::Out), Zoom::All);
     assert_eq!(Zoom::ALL.map(Zoom::label), ["×1/4", "×1/2", "×1", "×2", "×4", "all"]);
+}
+
+#[test]
+fn a_candle_cut_short_by_the_next_session_centres_on_its_own_span() {
+    let starts = [0, 240, 330, 570];
+    let candles: Vec<Candle> = starts.iter().map(|&minute| candle(100.0, 101.0, minute)).collect();
+    let centres: Vec<f64> =
+        chart(&candles, Timeframe::H4).bars.iter().map(|bar| bar.time.seconds_since(T0) / 60.0).collect();
+    assert_eq!(centres, [120.0, 285.0, 450.0, 690.0], "04:00, 08:00 cut at 09:30, 09:30, 13:30");
 }

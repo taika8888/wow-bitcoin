@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use crate::feed::FeedStatus;
-use crate::market::Market;
+use crate::market::{Market, Session};
 use crate::settings::Settings;
 use crate::source::FetchFailure;
 use crate::time::Timestamp;
@@ -54,6 +54,9 @@ impl TickerDisplay {
                 let stale = matches!(status, FeedStatus::Stale(_));
                 let mut segments =
                     vec![DisplaySegment::neutral(format!("{label}{}", Self::price(quote.price, decimals(settings))))];
+                if let Some((tag, _)) = outside_regular(quote.session) {
+                    segments.push(DisplaySegment::neutral(format!("  {tag}")));
+                }
                 if settings.show_change {
                     let (text, tone) = Self::change(quote.change());
                     segments.push(DisplaySegment::neutral("  "));
@@ -81,11 +84,16 @@ impl TickerDisplay {
         match status {
             FeedStatus::Loading => parts.push("loading".to_string()),
             FeedStatus::Offline => parts.push("offline".to_string()),
-            FeedStatus::Live(quote) => parts.extend([Self::price(quote.price, decimals(settings)), "live".to_string()]),
-            FeedStatus::Stale(quote) => parts.extend([
-                Self::price(quote.price, decimals(settings)),
-                format!("stale {}", Self::age(quote.fetched_at, now)),
-            ]),
+            FeedStatus::Live(quote) | FeedStatus::Stale(quote) => {
+                parts.push(Self::price(quote.price, decimals(settings)));
+                if let Some((_, words)) = outside_regular(quote.session) {
+                    parts.push(words.to_string());
+                }
+                parts.push(match status {
+                    FeedStatus::Stale(_) => format!("stale {}", Self::age(quote.fetched_at, now)),
+                    _ => "live".to_string(),
+                });
+            }
         }
         if let Some(failure) = failure.filter(|_| !matches!(status, FeedStatus::Live(_))) {
             parts.push(failure.message());
@@ -128,6 +136,15 @@ impl TickerDisplay {
         } else {
             (magnitude, Tone::Neutral)
         }
+    }
+}
+
+/// The ticker's tag and the tooltip's words for a trade outside the regular session.
+fn outside_regular(session: Session) -> Option<(&'static str, &'static str)> {
+    match session {
+        Session::Regular => None,
+        Session::Pre => Some(("PM", "pre-market")),
+        Session::Post => Some(("AH", "after hours")),
     }
 }
 

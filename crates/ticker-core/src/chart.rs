@@ -154,7 +154,8 @@ impl ChartFeed {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bar {
-    /// The middle of the candle's interval, so bars sit between interval boundaries.
+    /// The middle of the candle's interval, or of the time until the next candle when that is shorter, so bars sit
+    /// between interval boundaries.
     pub time: Timestamp,
     pub low: f64,
     pub high: f64,
@@ -223,11 +224,14 @@ impl CandleChart {
         let minimum_body = (price_domain.end() - price_domain.start()) * Self::MINIMUM_BODY;
         let bars = merged
             .iter()
-            .map(|candle| {
+            .zip(merged.iter().skip(1).map(Some).chain([None]))
+            .map(|(candle, next)| {
                 let middle = (candle.open + candle.close) / 2.0;
                 let half = (candle.close - candle.open).abs().max(minimum_body) / 2.0;
+                // Yahoo cuts a 4h candle short at a session boundary, so a candle spans at most until the next starts.
+                let span = next.map_or(interval, |next| next.time.seconds_since(candle.time).min(interval));
                 Bar {
-                    time: candle.time.plus(interval / 2.0),
+                    time: candle.time.plus(span / 2.0),
                     low: candle.low,
                     high: candle.high,
                     body_low: middle - half,

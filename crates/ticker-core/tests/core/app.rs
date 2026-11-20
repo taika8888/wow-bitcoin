@@ -7,8 +7,8 @@ use ticker_core::kraken::{self, TICKER_URL};
 use ticker_core::source::CANDLES_TIMEOUT;
 use ticker_core::{
     App, BodyError, CandleLoad, ChartNotice, Effect, FeedStatus, FetchFailure, FetchProblem, Frontmost, HttpOutcome,
-    Input, Market, OverlayEvent, OverlayMode, PressTarget, Quote, Rect, RequestId, ScreenPoint, Settings, Snapshot,
-    SnapshotWindow, Source, Timeframe, Timestamp, Tone, Zoom, ZoomStep, yahoo,
+    Input, Market, OverlayEvent, OverlayMode, PressTarget, Quote, Rect, RequestId, ScreenPoint, Session, Settings,
+    Snapshot, SnapshotWindow, Source, Timeframe, Timestamp, Tone, Zoom, ZoomStep, yahoo,
 };
 
 use crate::chart::{DEFAULT_BUDGET, T0};
@@ -223,7 +223,7 @@ fn the_quote_turns_stale_on_the_tick_that_crosses_three_missed_refreshes() {
     shell.tick(0.0);
     let effects = shell.finish_quote(price_body(80482.4), 0.0);
     assert!(renders(&effects));
-    let quote = Quote { price: 80482.4, reference: 80000.0, fetched_at: T0 };
+    let quote = Quote { price: 80482.4, reference: 80000.0, session: Session::Regular, fetched_at: T0 };
     assert_eq!(shell.app.status(), FeedStatus::Live(quote));
     shell.tick(5.0);
     assert!(!renders(&shell.tick(15.0)), "nothing on screen changes at exactly the threshold");
@@ -535,7 +535,12 @@ fn the_newest_candle_and_the_last_price_follow_each_quote_taken_inside_it() {
     shell.tick(26.0);
     assert_eq!(
         shell.app.status(),
-        FeedStatus::Stale(Quote { price: 79900.0, reference: 80000.0, fetched_at: at(10.0) })
+        FeedStatus::Stale(Quote {
+            price: 79900.0,
+            reference: 80000.0,
+            session: Session::Regular,
+            fetched_at: at(10.0)
+        })
     );
     assert_eq!(newest(&shell).0, 79900.0, "a stale quote is still newer than the candles");
 }
@@ -620,14 +625,28 @@ fn an_ant_ticker_fetches_from_yahoo_and_shows_cents_against_the_previous_close()
     assert_eq!(effects[0], Effect::FetchQuote { request, url: yahoo::QUOTE_URL, timeout: Duration::from_secs(5) });
     assert_eq!(shell.app.display().text(), "ANT ...");
     shell.finish_quote(yahoo_quote_body(), 1.0);
-    assert_eq!(shell.app.display().text(), "ANT $95.76  +15.37%");
-    assert_eq!(shell.app.tooltip(), "BTC Ticker · ANT · $95.76 · live");
+    assert_eq!(shell.app.display().text(), "ANT $86.77  -10.70%");
+    assert_eq!(shell.app.tooltip(), "BTC Ticker · ANT · $86.77 · live");
     let effects = shell.click(PressTarget::Body);
     let (timeframe, request) = candle_request(&effects).unwrap();
     let url = yahoo::chart_url(Timeframe::M15);
     assert!(effects.contains(&Effect::FetchCandles { request, timeframe, url, timeout: CANDLES_TIMEOUT }));
     shell.finish_candles(answered(fixtures::YAHOO_15M), 2.0);
     assert_eq!(shell.load(Timeframe::M15).series().map(|series| series.candles.len()), Some(7));
+}
+
+#[test]
+fn an_ant_ticker_tags_an_after_hours_or_pre_market_price() {
+    for (body, text, tooltip) in [
+        (fixtures::YAHOO_QUOTE_POST, "ANT $92.60  AH  -4.70%", "BTC Ticker · ANT · $92.60 · after hours · live"),
+        (fixtures::YAHOO_QUOTE_PRE, "ANT $89.85  PM  -7.53%", "BTC Ticker · ANT · $89.85 · pre-market · live"),
+    ] {
+        let mut shell = Shell::new(Settings { market: Market::Ant, ..Settings::default() });
+        shell.tick(0.0);
+        shell.finish_quote(answered(body), 1.0);
+        assert_eq!(shell.app.display().text(), text);
+        assert_eq!(shell.app.tooltip(), tooltip);
+    }
 }
 
 #[test]
@@ -656,7 +675,7 @@ fn switching_markets_drops_everything_fetched_for_the_old_one() {
     assert_eq!(shell.app, before);
 
     shell.finish_quote(yahoo_quote_body(), 6.0);
-    assert_eq!(shell.app.display().text(), "ANT $95.76  +15.37%");
+    assert_eq!(shell.app.display().text(), "ANT $86.77  -10.70%");
     shell.finish_candles(answered(fixtures::YAHOO_15M), 6.0);
     let newest = shell.app.chart(DEFAULT_BUDGET).map(|chart| chart.last_price);
     assert_eq!(newest.map(|price| (price * 100.0).round() / 100.0), Some(95.37));
