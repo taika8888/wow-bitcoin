@@ -636,6 +636,20 @@ fn an_ant_ticker_fetches_from_yahoo_and_shows_cents_against_the_previous_close()
 }
 
 #[test]
+fn an_ant_ticker_tags_an_after_hours_or_pre_market_price() {
+    for (body, text, tooltip) in [
+        (fixtures::YAHOO_QUOTE_POST, "ANT $92.60  AH  -4.70%", "BTC Ticker · ANT · $92.60 · after hours · live"),
+        (fixtures::YAHOO_QUOTE_PRE, "ANT $89.85  PM  -7.53%", "BTC Ticker · ANT · $89.85 · pre-market · live"),
+    ] {
+        let mut shell = Shell::new(Settings { market: Market::Ant, ..Settings::default() });
+        shell.tick(0.0);
+        shell.finish_quote(answered(body), 1.0);
+        assert_eq!(shell.app.display().text(), text);
+        assert_eq!(shell.app.tooltip(), tooltip);
+    }
+}
+
+#[test]
 fn switching_markets_drops_everything_fetched_for_the_old_one() {
     let mut shell = expanded_on(Timeframe::M15);
     shell.finish_candles(candles_body(), 1.0);

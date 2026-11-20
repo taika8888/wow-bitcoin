@@ -147,6 +147,30 @@ fn ant_shows_its_label_and_always_cents() {
 }
 
 #[test]
+fn a_trade_outside_the_regular_session_is_tagged_after_the_price() {
+    let ant = Settings { market: Market::Ant, ..Settings::default() };
+    let later = FETCHED_AT.plus(200.0);
+    for (session, tag, words) in [(Session::Post, "AH", "after hours"), (Session::Pre, "PM", "pre-market")] {
+        let quote = Quote { price: 92.6, reference: 97.17, session, fetched_at: FETCHED_AT };
+        let live = TickerDisplay::new(&FeedStatus::Live(quote), &ant, FETCHED_AT);
+        assert_eq!(live.text(), format!("ANT $92.60  {tag}  -4.70%"));
+        assert_eq!(live.segments[1], DisplaySegment::new(format!("  {tag}"), Tone::Neutral));
+        assert_eq!(live.segments.last(), Some(&DisplaySegment::new("-4.70%", Tone::Down)));
+        let no_change = Settings { show_change: false, ..ant };
+        assert_eq!(
+            TickerDisplay::new(&FeedStatus::Live(quote), &no_change, FETCHED_AT).text(),
+            format!("ANT $92.60  {tag}")
+        );
+        let stale = TickerDisplay::new(&FeedStatus::Stale(quote), &ant, later);
+        assert_eq!(stale.text(), format!("ANT $92.60  {tag}  -4.70%  stale 3m"));
+        let tooltip = TickerDisplay::tooltip(&FeedStatus::Live(quote), None, &ant, FETCHED_AT);
+        assert_eq!(tooltip, format!("BTC Ticker · ANT · $92.60 · {words} · live"));
+        let tooltip = TickerDisplay::tooltip(&FeedStatus::Stale(quote), None, &ant, later);
+        assert_eq!(tooltip, format!("BTC Ticker · ANT · $92.60 · {words} · stale 3m"));
+    }
+}
+
+#[test]
 fn the_market_decodes_from_its_name_and_falls_back_to_btc() {
     assert_eq!(Settings::default().market, Market::Btc);
     assert_eq!(Settings::decode(Some(r#"{"market":"ant","decimals":1}"#)).market, Market::Ant);
