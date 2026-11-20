@@ -1,5 +1,5 @@
 use ticker_core::kraken::parse_candles;
-use ticker_core::{Candle, CandleChart, CandleSeries, Quote, Timeframe, Timestamp, Tone, Zoom, ZoomStep};
+use ticker_core::{Candle, CandleChart, CandleSeries, Quote, Session, Timeframe, Timestamp, Tone, Zoom, ZoomStep};
 
 use crate::fixtures;
 
@@ -146,7 +146,7 @@ fn fetched_inside_the_newest_candle() -> CandleSeries {
 }
 
 fn quote(price: f64, fetched_at: Timestamp) -> Quote {
-    Quote { price, reference: price, fetched_at }
+    Quote { price, reference: price, session: Session::Regular, fetched_at }
 }
 
 #[test]

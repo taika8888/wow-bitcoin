@@ -1,5 +1,7 @@
 use ticker_core::kraken::{self, parse_candles, parse_quote};
-use ticker_core::{BodyError, Candle, FetchFailure, FetchProblem, HttpOutcome, Quote, Source, Timeframe, Timestamp};
+use ticker_core::{
+    BodyError, Candle, FetchFailure, FetchProblem, HttpOutcome, Quote, Session, Source, Timeframe, Timestamp,
+};
 
 use crate::fixtures;
 
@@ -32,7 +34,7 @@ fn failure<T>(result: Result<T, BodyError>) -> Option<Failure> {
 #[test]
 fn parses_the_recorded_ticker() {
     let quote = parse_quote(fixtures::TICKER.as_bytes(), NOW).unwrap();
-    assert_eq!(quote, Quote { price: 80489.7, reference: 80440.8, fetched_at: NOW });
+    assert_eq!(quote, Quote { price: 80489.7, reference: 80440.8, session: Session::Regular, fetched_at: NOW });
     assert!((quote.change() - (80489.7 - 80440.8) / 80440.8).abs() < 1e-12);
 }
 
