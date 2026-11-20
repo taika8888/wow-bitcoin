@@ -17,6 +17,12 @@ fn quote_body(price: &str, previous_close: &str) -> String {
     )
 }
 
+fn extended_quote_body(closes: &str) -> String {
+    format!(
+        r#"{{"chart":{{"result":[{{"meta":{{"regularMarketPrice":86.94,"chartPreviousClose":97.17}},"indicators":{{"quote":[{{"close":[{closes}]}}]}}}}],"error":null}}}}"#
+    )
+}
+
 fn at(seconds: f64) -> Timestamp {
     Timestamp::from_unix_seconds(seconds)
 }
@@ -30,6 +36,21 @@ fn cents(price: f64) -> f64 {
 fn parses_the_recorded_quote_against_the_previous_close() {
     let quote = parse_quote(fixtures::YAHOO_QUOTE.as_bytes(), NOW).unwrap();
     assert_eq!(quote, Quote { price: 95.76, reference: 83.0, fetched_at: NOW });
+}
+
+/// After 4 PM the regular-session price stands still, while the newest close follows after-hours trades.
+#[test]
+fn the_quote_is_the_newest_close_extended_hours_included() {
+    let price = |closes: &str| parse_quote(extended_quote_body(closes).as_bytes(), NOW).map(|quote| quote.price);
+    assert_eq!(price("86.94,87.5,88.25"), Ok(88.25));
+    assert_eq!(price("86.94,88.25,null"), Ok(88.25));
+    assert_eq!(price("86.94,87.46499633789062"), Ok(87.465), "Yahoo's single-precision 87.465");
+    assert_eq!(price("null,null"), Ok(86.94));
+    assert_eq!(price(""), Ok(86.94));
+    assert!(matches!(price("86.94,-1"), Err(BodyError::InvalidValue(_))));
+    assert!(matches!(price("86.94,\"88\""), Err(BodyError::Malformed(_))));
+    let reference = parse_quote(extended_quote_body("88.25").as_bytes(), NOW).map(|quote| quote.reference);
+    assert_eq!(reference, Ok(97.17));
 }
 
 #[test]
@@ -178,10 +199,10 @@ fn keeps_the_newest_720_candles() {
 #[test]
 fn urls() {
     let chart = "https://query1.finance.yahoo.com/v8/finance/chart/ANT";
-    assert_eq!(yahoo::QUOTE_URL, format!("{chart}?interval=1d&range=1d"));
-    assert_eq!(yahoo::chart_url(Timeframe::M1), format!("{chart}?interval=1m&range=5d"));
-    assert_eq!(yahoo::chart_url(Timeframe::M15), format!("{chart}?interval=15m&range=60d"));
-    assert_eq!(yahoo::chart_url(Timeframe::H4), format!("{chart}?interval=4h&range=2y"));
+    assert_eq!(yahoo::QUOTE_URL, format!("{chart}?interval=5m&range=1d&includePrePost=true"));
+    assert_eq!(yahoo::chart_url(Timeframe::M1), format!("{chart}?interval=1m&range=5d&includePrePost=true"));
+    assert_eq!(yahoo::chart_url(Timeframe::M15), format!("{chart}?interval=15m&range=1mo&includePrePost=true"));
+    assert_eq!(yahoo::chart_url(Timeframe::H4), format!("{chart}?interval=4h&range=1y&includePrePost=true"));
 }
 
 #[test]

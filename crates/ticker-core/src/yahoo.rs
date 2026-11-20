@@ -8,20 +8,26 @@ use crate::source::{BodyError, bounded, malformed, newest, positive};
 use crate::time::Timestamp;
 
 const CHART_URL: &str = "https://query1.finance.yahoo.com/v8/finance/chart/ANT";
-pub const QUOTE_URL: &str = "https://query1.finance.yahoo.com/v8/finance/chart/ANT?interval=1d&range=1d";
+/// The latest trading day in 5-minute candles, pre-market and after-hours included. Its newest close is the newest
+/// trade, which the meta's `regularMarketPrice` is not outside regular hours. 5m keeps the body near 10 KB.
+pub const QUOTE_URL: &str =
+    "https://query1.finance.yahoo.com/v8/finance/chart/ANT?interval=5m&range=1d&includePrePost=true";
 
-/// The shortest range that still holds `MAX_CANDLES` rows for the timeframe. Regular-session trades only, like the
-/// quote, so the quote the chart adds to the newest candle is a price from that candle's session.
+/// The shortest range that still holds `MAX_CANDLES` rows for the timeframe. Pre-market and after-hours trades are
+/// included, like the quote, so the quote the chart adds to the newest candle is a price from that candle's session.
+/// Yahoo has nothing for Nasdaq's overnight session, 8 PM to 4 AM New York time.
 pub fn chart_url(timeframe: Timeframe) -> String {
     let query = match timeframe {
         Timeframe::M1 => "interval=1m&range=5d",
-        Timeframe::M15 => "interval=15m&range=60d",
-        Timeframe::H4 => "interval=4h&range=2y",
+        Timeframe::M15 => "interval=15m&range=1mo",
+        Timeframe::H4 => "interval=4h&range=1y",
     };
-    format!("{CHART_URL}?{query}")
+    format!("{CHART_URL}?{query}&includePrePost=true")
 }
 
-/// The reference price is the previous close, which on the first trading day is the IPO price.
+/// The price is the newest close in the series, extended hours included, or the regular-session price when the day
+/// has no trades yet. The reference price is the previous regular close, which on the first trading day is the IPO
+/// price.
 pub fn parse_quote(body: &[u8], fetched_at: Timestamp) -> Result<Quote, BodyError> {
     let result = chart_result(body)?;
     let meta = result.get("meta").and_then(Value::as_object).ok_or_else(|| malformed("result has no meta"))?;
@@ -30,7 +36,36 @@ pub fn parse_quote(body: &[u8], fetched_at: Timestamp) -> Result<Quote, BodyErro
             meta.get(name).and_then(Value::as_f64).ok_or_else(|| malformed(format!("{name} is not a number")))?;
         positive(value, name)
     };
-    Ok(Quote { price: field("regularMarketPrice")?, reference: field("chartPreviousClose")?, fetched_at })
+    let price = match newest_close(&result)? {
+        Some(close) => close,
+        None => field("regularMarketPrice")?,
+    };
+    Ok(Quote { price, reference: field("chartPreviousClose")?, fetched_at })
+}
+
+/// The last non-null close, the zero-range row stamped with the time of the request included.
+fn newest_close(result: &Map<String, Value>) -> Result<Option<f64>, BodyError> {
+    let Some(closes) = result
+        .get("indicators")
+        .and_then(|indicators| indicators.get("quote"))
+        .and_then(Value::as_array)
+        .and_then(|quotes| quotes.first())
+        .and_then(|quote| quote.get("close"))
+    else {
+        return Ok(None);
+    };
+    let closes = closes.as_array().ok_or_else(|| malformed("close is not an array"))?;
+    let Some(close) = closes.iter().rfind(|close| !close.is_null()) else { return Ok(None) };
+    let close = close.as_f64().ok_or_else(|| malformed("the newest close is not a number"))?;
+    positive(single_precision_decimal(close), "newest close").map(Some)
+}
+
+/// Yahoo's candles hold single-precision prices widened to JSON numbers, so 95.76 arrives as 95.76000213623047. The
+/// shortest decimal that reads back as the same `f32` is the price Yahoo meant.
+fn single_precision_decimal(value: f64) -> f64 {
+    #[expect(clippy::cast_possible_truncation, reason = "the value came from an f32")]
+    let narrow = value as f32;
+    narrow.to_string().parse().unwrap_or(value)
 }
 
 /// Oldest first, the newest `MAX_CANDLES`. Rows with no trades carry nulls and are skipped. Yahoo ends the series with

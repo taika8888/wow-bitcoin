@@ -73,7 +73,7 @@ Set WoW's display mode to **Windowed** or **Windowed (Fullscreen)**. In exclusiv
 - Scroll, turn the mouse wheel or pinch over the open chart to zoom. The game keeps the keyboard and the focus, and it doesn't get the wheel while the pointer is over the chart. On Windows, this holds even with the "Scroll inactive windows when I hover over them" setting turned off.
 - While the position is unlocked, drag the ticker to move it. On Windows, you can also drag the open chart, and drag its corner grip, opposite the ticker, to resize it. The new size is saved when you release the mouse.
 - **Lock Position** stops dragging and resizing. Clicks still open the chart.
-- **Show ANT** switches the ticker and the chart to Anthropic's shares, and **Show BTC** switches back. Outside Nasdaq trading hours, the ticker and the chart show the last regular-session price.
+- **Show ANT** switches the ticker and the chart to Anthropic's shares, and **Show BTC** switches back. The ticker and the chart include pre-market and after-hours trades. Between 8 PM and 4 AM New York time, and on weekends, they show the last after-hours price.
 - When the price stops updating, the ticker dims it and marks it stale with its age, for example `stale 3m`. Hover over the tray icon on Windows, or the menu bar icon on macOS, to see the price, whether it is live, and why it is not updating, for example `Kraken is not answering`. The tooltip works while the ticker is hidden too.
 
 The **Settings** window has these options:
@@ -94,8 +94,8 @@ The app also remembers the last timeframe you chose and the last zoom.
 ANT prices come from Yahoo Finance's chart data feed. Yahoo doesn't offer it as a documented public service, so it can change or stop working without notice. If it does, ANT stops updating. BTC uses a separate feed from Kraken and keeps working.
 
 - **Freshness.** On ANT's first trading day, Yahoo's price was a few seconds behind Nasdaq's own real-time quote.
-- **Regular session only.** The ticker and the chart ignore pre-market and after-hours trades.
-- **History.** The chart holds up to 720 candles: about two trading days at 1m, about five weeks at 15m, and more than a year at 4h. Nothing goes back before 19 November 2026, when ANT started trading.
+- **Extended hours, but not overnight.** The ticker and the chart include pre-market trades from 4 AM and after-hours trades until 8 PM, New York time. Yahoo has no data for Nasdaq's overnight session, from 8 PM to 4 AM, so the chart has a gap there. The percentage change is measured from the previous regular-session close, extended hours included.
+- **History.** The chart holds up to 720 candles: about 12 hours of trading at 1m, about two weeks at 15m, and about seven months at 4h. Nothing goes back before 19 November 2026, when ANT started trading.
 - **Rate limits.** Yahoo doesn't publish any. At the default 5-second refresh, one copy of the app asks for the ANT price about 720 times an hour, and an open chart adds more requests. Several copies on one internet connection add up. If Yahoo refuses price requests, for example with HTTP 429 (too many requests), the app waits longer between attempts from the second failure in a row, up to a minute apart at the default refresh. Once the last price is older than three refresh intervals, 15 seconds at the default, it shows as stale, and the tooltip names the cause, for example `Yahoo Finance answered HTTP 429`.
 - **Terms.** [Yahoo's Terms of Service](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html) forbid accessing or reusing its services for any commercial purpose, and accessing them by any method other than the interface and instructions Yahoo provides. The app is free and sells nothing, but it reads the feed directly, so ANT prices work only as long as Yahoo tolerates that.
 
