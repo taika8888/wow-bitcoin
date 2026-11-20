@@ -414,7 +414,11 @@ impl Renderer {
                 }
             }
 
-            let body_width = (plot.width / chart.bars.len().max(1) as f64 * 0.7).max(1.0);
+            // Bars sit on a time axis with overnight gaps and Yahoo's shorter session-boundary candles, so the
+            // closest pair of bars, not the bar count, sets how wide a body fits.
+            let spacing =
+                chart.bars.windows(2).map(|pair| x_of(pair[1].time) - x_of(pair[0].time)).fold(f64::INFINITY, f64::min);
+            let body_width = ((plot.width / chart.bars.len().max(1) as f64).min(spacing) * 0.7).max(1.0);
             for bar in &chart.bars {
                 let brush = self.brush(color(tone_color(settings, bar.tone), 1.0))?;
                 let x = x_of(bar.time);

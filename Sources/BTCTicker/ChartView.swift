@@ -61,6 +61,10 @@ final class CandleChartView: PaintedView {
         text.withAlphaComponent(text.alphaComponent * 0.12).setStroke()
         grid.stroke()
 
+        // Bars sit on a time axis with overnight gaps and Yahoo's shorter session-boundary candles, so the
+        // closest pair of bars, not the bar count, sets how wide a body fits.
+        let spacing = zip(chart.bars, chart.bars.dropFirst()).map { x($1.time) - x($0.time) }.min() ?? .infinity
+        let bodyWidth = max(1, min(self.bodyWidth, spacing * 0.7))
         for bar in chart.bars {
             color(bar.tone).set()
             let barX = x(bar.time)
