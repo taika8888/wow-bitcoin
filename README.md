@@ -73,13 +73,13 @@ Set WoW's display mode to **Windowed** or **Windowed (Fullscreen)**. In exclusiv
 - Scroll, turn the mouse wheel or pinch over the open chart to zoom. The game keeps the keyboard and the focus, and it doesn't get the wheel while the pointer is over the chart. On Windows, this holds even with the "Scroll inactive windows when I hover over them" setting turned off.
 - While the position is unlocked, drag the ticker to move it. On Windows, you can also drag the open chart, and drag its corner grip, opposite the ticker, to resize it. The new size is saved when you release the mouse.
 - **Lock Position** stops dragging and resizing. Clicks still open the chart.
-- **Show ANT** switches the ticker and the chart to Anthropic's shares, and **Show BTC** switches back. Outside Nasdaq trading hours, the ticker and the chart show the last regular-session price.
+- **Show ANT** switches the ticker and the chart to Anthropic's shares, and **Show BTC** switches back. Before and after Nasdaq's regular session, the ticker shows the latest pre-market or after-hours trade, tagged **PM** or **AH**.
 - When the price stops updating, the ticker dims it and marks it stale with its age, for example `stale 3m`. Hover over the tray icon on Windows, or the menu bar icon on macOS, to see the price, whether it is live, and why it is not updating, for example `Kraken is not answering`. The tooltip works while the ticker is hidden too.
 
 The **Settings** window has these options:
 
 - The market, BTC or ANT.
-- Font size, BTC decimals (0 to 2; ANT always shows cents), and whether to show the market label and the day's change. For BTC, the change is since Kraken's daily open; for ANT, since the previous close.
+- Font size, BTC decimals (0 to 2; ANT always shows cents), and whether to show the market label and the day's change. For BTC, the change is since Kraken's daily open; for ANT, since the previous close, or since the last regular close before and after the regular session.
 - Price, up and down colors, and the background opacity.
 - Chart width and height. A wider chart draws more bars before neighbouring candles merge into one.
 - Refresh interval (2 to 300 seconds, default 5).
@@ -94,8 +94,8 @@ The app also remembers the last timeframe you chose and the last zoom.
 ANT prices come from Yahoo Finance's chart data feed. Yahoo doesn't offer it as a documented public service, so it can change or stop working without notice. If it does, ANT stops updating. BTC uses a separate feed from Kraken and keeps working.
 
 - **Freshness.** On ANT's first trading day, Yahoo's price was a few seconds behind Nasdaq's own real-time quote.
-- **Regular session only.** The ticker and the chart ignore pre-market and after-hours trades.
-- **History.** The chart holds up to 720 candles: about two trading days at 1m, about five weeks at 15m, and more than a year at 4h. Nothing goes back before 19 November 2026, when ANT started trading.
+- **Pre-market and after hours.** From 4:00 to 9:30 a.m. and from 4:00 to 8:00 p.m. New York time, the ticker shows the latest trade, tagged PM or AH, and measures the change from the last regular close. After 8:00 p.m. it keeps the last after-hours trade until pre-market trading starts. The chart includes those hours too.
+- **History.** The chart holds up to 720 candles: about 12 hours at 1m, about 11 trading days at 15m, and about seven months at 4h, because pre-market and after-hours candles count too. Nothing goes back before 19 November 2026, when ANT started trading.
 - **Rate limits.** Yahoo doesn't publish any. At the default 5-second refresh, one copy of the app asks for the ANT price about 720 times an hour, and an open chart adds more requests. Several copies on one internet connection add up. If Yahoo refuses price requests, for example with HTTP 429 (too many requests), the app waits longer between attempts from the second failure in a row, up to a minute apart at the default refresh. Once the last price is older than three refresh intervals, 15 seconds at the default, it shows as stale, and the tooltip names the cause, for example `Yahoo Finance answered HTTP 429`.
 - **Terms.** [Yahoo's Terms of Service](https://legal.yahoo.com/us/en/yahoo/terms/otos/index.html) forbid accessing or reusing its services for any commercial purpose, and accessing them by any method other than the interface and instructions Yahoo provides. The app is free and sells nothing, but it reads the feed directly, so ANT prices work only as long as Yahoo tolerates that.
 
@@ -133,8 +133,8 @@ For BTC, the default, they go to Kraken's public REST API at `api.kraken.com`:
 
 For ANT, they go to Yahoo Finance's public chart API at `query1.finance.yahoo.com`, on the same schedule:
 
-- `https://query1.finance.yahoo.com/v8/finance/chart/ANT?interval=1d&range=1d` for the price.
-- `https://query1.finance.yahoo.com/v8/finance/chart/ANT?interval=<interval>&range=<range>` for the candles, only while the chart is open.
+- `https://query1.finance.yahoo.com/v8/finance/chart/ANT?interval=4h&range=1d&includePrePost=true` for the price.
+- `https://query1.finance.yahoo.com/v8/finance/chart/ANT?interval=<interval>&range=<range>&includePrePost=true` for the candles, only while the chart is open.
 
 There are no accounts, no API keys, no analytics and no telemetry. Like any web request, a request to Kraken or Yahoo shows that server your IP address. Settings stay on your computer.
 
