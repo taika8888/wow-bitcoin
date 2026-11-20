@@ -8,6 +8,9 @@ use crate::source::{BodyError, bounded, malformed, newest, positive};
 use crate::time::Timestamp;
 
 const CHART_URL: &str = "https://query1.finance.yahoo.com/v8/finance/chart/ANT";
+/// Yahoo's 4h candles restart at 04:00, 09:30, 16:00 New York time, so they start on the half hour. New York's offset
+/// from UTC is a whole number of half hours, so this holds in Unix seconds too.
+const BUCKET_GRID_SECONDS: f64 = 1800.0;
 pub const QUOTE_URL: &str = "https://query1.finance.yahoo.com/v8/finance/chart/ANT?interval=1d&range=1d";
 
 /// The shortest range that still holds `MAX_CANDLES` rows for the timeframe. Regular-session trades only, like the
@@ -33,10 +36,13 @@ pub fn parse_quote(body: &[u8], fetched_at: Timestamp) -> Result<Quote, BodyErro
     Ok(Quote { price: field("regularMarketPrice")?, reference: field("chartPreviousClose")?, fetched_at })
 }
 
-/// Oldest first, the newest `MAX_CANDLES`. Rows with no trades carry nulls and are skipped. Yahoo ends the series with
-/// a zero-range row stamped with the time of the request. It is dropped, because the forming candle before it already
-/// holds that trade and the chart adds the live quote to it. A forming candle still all null takes the tick's trade
-/// instead, so the newest candle is the current interval's and later quotes land in it.
+/// Oldest first, the newest `MAX_CANDLES`. Rows with no trades carry nulls and are skipped. While a session trades,
+/// Yahoo ends the series with a zero-range row stamped with the time of the last trade. It is dropped, because the
+/// forming candle before it already holds that trade and the chart adds the live quote to it. A forming candle still
+/// all null takes the tick's trade instead, so the newest candle is the current interval's and later quotes land in it.
+///
+/// Every real candle starts on the grid of its interval, capped at half an hour, and the tick almost never does. A gap
+/// test cannot tell the tick from a 4h candle that a session boundary cut short.
 pub fn parse_candles(body: &[u8], timeframe: Timeframe) -> Result<Vec<Candle>, BodyError> {
     let result = chart_result(body)?;
     let Some(times) = result.get("timestamp") else { return Ok(Vec::new()) };
@@ -57,7 +63,8 @@ pub fn parse_candles(body: &[u8], timeframe: Timeframe) -> Result<Vec<Candle>, B
         quote.get(name).and_then(Value::as_array).ok_or_else(|| malformed(format!("quote has no {name} array")))
     };
     let (open, high, low, close) = (column("open")?, column("high")?, column("low")?, column("close")?);
-    let live_tick = matches!(times.as_slice(), [.., before, last] if last - before < timeframe.interval_seconds());
+    let grid = timeframe.interval_seconds().min(BUCKET_GRID_SECONDS);
+    let live_tick = matches!(times.as_slice(), [.., before, last] if last % grid != 0.0 || last <= before);
     let rows = times.len() - usize::from(live_tick);
     let mut candles = Vec::with_capacity(rows);
     let cells_at = |row: usize| [open, high, low, close].map(|column| column.get(row).filter(|cell| !cell.is_null()));

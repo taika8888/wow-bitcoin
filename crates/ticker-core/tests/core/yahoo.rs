@@ -101,19 +101,41 @@ fn a_4h_candle_keeps_its_session_aligned_time() {
     assert_eq!(candles.iter().map(in_cents).collect::<Vec<_>>(), [opening]);
 }
 
+fn candle_times(body: &str, timeframe: Timeframe) -> Vec<f64> {
+    parse_candles(body.as_bytes(), timeframe).unwrap().iter().map(|candle| candle.time.unix_seconds()).collect()
+}
+
 #[test]
-fn drops_a_final_row_only_when_it_comes_less_than_an_interval_after_the_one_before() {
+fn drops_a_final_row_off_the_candle_grid_or_not_after_the_one_before() {
     let rows = |times: &str| chart_body(times, "1,2", "1,2", "1,2", "1,2");
-    let times = |body: String| {
-        parse_candles(body.as_bytes(), Timeframe::M1)
-            .unwrap()
-            .iter()
-            .map(|candle| candle.time.unix_seconds())
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(times(rows("60,119")), [60.0]);
-    assert_eq!(times(rows("60,120")), [60.0, 120.0]);
-    assert_eq!(times(chart_body("60", "1", "1", "1", "1")), [60.0]);
+    assert_eq!(candle_times(&rows("60,119"), Timeframe::M1), [60.0]);
+    assert_eq!(candle_times(&rows("60,120"), Timeframe::M1), [60.0, 120.0]);
+    assert_eq!(candle_times(&rows("60,60"), Timeframe::M1), [60.0]);
+    assert_eq!(candle_times(&chart_body("60", "1", "1", "1", "1"), Timeframe::M1), [60.0]);
+}
+
+/// 09:30 New York time on 2026-11-20, a whole number of half hours since the epoch.
+const OPEN: f64 = 1_795_185_000.0;
+
+/// A trade more than an interval after the last candle, as when the forming interval has no row of its own yet, is
+/// still the tick and not a candle of its own.
+#[test]
+fn drops_an_off_grid_tick_at_every_timeframe_however_late_it_comes() {
+    for timeframe in Timeframe::ALL {
+        for late in [17.0, f64::from(timeframe.spec().interval_minutes * 60) + 17.0] {
+            let body = chart_body(&format!("{OPEN},{}", OPEN + late), "1,2", "1,2", "1,2", "1,2");
+            assert_eq!(candle_times(&body, timeframe), [OPEN], "{timeframe:?} tick {late} s after the candle");
+        }
+    }
+}
+
+/// With no after-hours trades there is no tick, and the 4h answer ends on the 16:00 candle, 2.5 hours after the 13:30
+/// one. Both are real.
+#[test]
+fn keeps_a_final_4h_candle_that_a_session_boundary_cut_short() {
+    let (afternoon, close) = (OPEN + 4.0 * 3600.0, OPEN + 6.5 * 3600.0);
+    let body = chart_body(&format!("{OPEN},{afternoon},{close}"), "1,2,3", "1,2,3", "1,2,3", "1,2,3");
+    assert_eq!(candle_times(&body, Timeframe::H4), [OPEN, afternoon, close]);
 }
 
 #[test]
