@@ -137,6 +137,15 @@ fn drops_a_final_row_only_when_it_comes_less_than_an_interval_after_the_one_befo
     assert_eq!(times(chart_body("60", "1", "1", "1", "1")), [60.0]);
 }
 
+/// Extended 4h candles start at 04:00, 08:00, 09:30, 13:30 and 16:00 New York time, so a final 16:00 candle comes
+/// less than 4 hours after the one before. It has a range, so it is a candle, not the zero-range live tick.
+#[test]
+fn a_short_final_candle_with_a_range_is_kept() {
+    let body = chart_body("0,9000", "1,2", "2,3", "1,1", "2,2");
+    let times = parse_candles(body.as_bytes(), Timeframe::H4).unwrap();
+    assert_eq!(times.iter().map(|candle| candle.time).collect::<Vec<_>>(), [at(0.0), at(9000.0)]);
+}
+
 #[test]
 fn a_null_forming_candle_takes_the_live_tick_trade() {
     let body = chart_body("60,120,150", "1,null,2", "1,null,2", "1,null,2", "1,null,2");
@@ -199,7 +208,7 @@ fn keeps_the_newest_720_candles() {
 #[test]
 fn urls() {
     let chart = "https://query1.finance.yahoo.com/v8/finance/chart/ANT";
-    assert_eq!(yahoo::QUOTE_URL, format!("{chart}?interval=5m&range=1d&includePrePost=true"));
+    assert_eq!(yahoo::QUOTE_URL, format!("{chart}?interval=2m&range=1d&includePrePost=true"));
     assert_eq!(yahoo::chart_url(Timeframe::M1), format!("{chart}?interval=1m&range=5d&includePrePost=true"));
     assert_eq!(yahoo::chart_url(Timeframe::M15), format!("{chart}?interval=15m&range=1mo&includePrePost=true"));
     assert_eq!(yahoo::chart_url(Timeframe::H4), format!("{chart}?interval=4h&range=1y&includePrePost=true"));

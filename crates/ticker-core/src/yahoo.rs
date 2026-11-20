@@ -8,14 +8,16 @@ use crate::source::{BodyError, bounded, malformed, newest, positive};
 use crate::time::Timestamp;
 
 const CHART_URL: &str = "https://query1.finance.yahoo.com/v8/finance/chart/ANT";
-/// The latest trading day in 5-minute candles, pre-market and after-hours included. Its newest close is the newest
-/// trade, which the meta's `regularMarketPrice` is not outside regular hours. 5m keeps the body near 10 KB.
+/// The latest trading day in 2-minute candles, pre-market and after-hours included. Its newest close is the newest
+/// trade, which the meta's `regularMarketPrice` is not outside regular hours. 2m keeps the body near 20 KB; 5m and
+/// coarser candles stop at 7 PM New York time, an hour before after-hours trading ends.
 pub const QUOTE_URL: &str =
-    "https://query1.finance.yahoo.com/v8/finance/chart/ANT?interval=5m&range=1d&includePrePost=true";
+    "https://query1.finance.yahoo.com/v8/finance/chart/ANT?interval=2m&range=1d&includePrePost=true";
 
 /// The shortest range that still holds `MAX_CANDLES` rows for the timeframe. Pre-market and after-hours trades are
 /// included, like the quote, so the quote the chart adds to the newest candle is a price from that candle's session.
-/// Yahoo has nothing for Nasdaq's overnight session, 8 PM to 4 AM New York time.
+/// Yahoo has nothing for Nasdaq's overnight session, 8 PM to 4 AM New York time, and its 15m and 4h candles stop at
+/// 7 PM.
 pub fn chart_url(timeframe: Timeframe) -> String {
     let query = match timeframe {
         Timeframe::M1 => "interval=1m&range=5d",
@@ -69,7 +71,7 @@ fn single_precision_decimal(value: f64) -> f64 {
 }
 
 /// Oldest first, the newest `MAX_CANDLES`. Rows with no trades carry nulls and are skipped. Yahoo ends the series with
-/// a zero-range row stamped with the time of the request. It is dropped, because the forming candle before it already
+/// a zero-range row stamped with the time of the request, or of the close once the market has closed. It is dropped, because the forming candle before it already
 /// holds that trade and the chart adds the live quote to it. A forming candle still all null takes the tick's trade
 /// instead, so the newest candle is the current interval's and later quotes land in it.
 pub fn parse_candles(body: &[u8], timeframe: Timeframe) -> Result<Vec<Candle>, BodyError> {
@@ -92,7 +94,12 @@ pub fn parse_candles(body: &[u8], timeframe: Timeframe) -> Result<Vec<Candle>, B
         quote.get(name).and_then(Value::as_array).ok_or_else(|| malformed(format!("quote has no {name} array")))
     };
     let (open, high, low, close) = (column("open")?, column("high")?, column("low")?, column("close")?);
-    let live_tick = matches!(times.as_slice(), [.., before, last] if last - before < timeframe.interval_seconds());
+    let zero_range = |row: usize| {
+        let prices = [open, high, low, close].map(|column| column.get(row).and_then(Value::as_f64));
+        prices[0].is_some() && prices.iter().all(|price| *price == prices[0])
+    };
+    let live_tick = matches!(times.as_slice(), [.., before, last] if last - before < timeframe.interval_seconds())
+        && zero_range(times.len() - 1);
     let rows = times.len() - usize::from(live_tick);
     let mut candles = Vec::with_capacity(rows);
     let cells_at = |row: usize| [open, high, low, close].map(|column| column.get(row).filter(|cell| !cell.is_null()));
